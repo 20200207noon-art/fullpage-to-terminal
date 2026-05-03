@@ -67,9 +67,27 @@ async function capture(tab) {
   // 2. 等一拍让懒加载图片解码、布局稳定
   await sleep(300);
 
-  // 3. 注入"消固定"样式：把 position:fixed/sticky 改成 absolute
-  //    captureBeyondViewport 在内部多次滚动渲染时会让 fixed/sticky 元素重复出现
-  //    （这是 lolipop 那张图被截两遍的根因）
+  // 2.5 拍 first frame（hide 之前的原始视口）+ 检测 sidebar/sticky 元素位置
+  //     拼接结束时把这些元素从 first frame 抠出来贴回拼接图，模拟"始终静止在那"的视觉
+  let firstFrameDataUrl = null;
+  let stickyOverlays = [];
+  try {
+    firstFrameDataUrl = await new Promise((resolve, reject) => {
+      chrome.tabs.captureVisibleTab(tab.windowId, { format: "png" }, (du) => {
+        const e = chrome.runtime.lastError;
+        if (e) return reject(new Error(e.message));
+        if (!du) return reject(new Error("first frame empty"));
+        resolve(du);
+      });
+    });
+    const detected = await execInPage(tab.id, detectStickyAndFixedRects);
+    if (Array.isArray(detected)) stickyOverlays = detected;
+    console.log("[fullpage-shot] first frame captured, sticky overlays:", stickyOverlays.length);
+  } catch (e) {
+    console.warn("[fullpage-shot] first frame / overlay detection failed:", e.message);
+  }
+
+  // 3. 注入"消固定"：彻底 display:none 所有 fixed/sticky，避免拼接重复
   let neutralized = false;
   try {
     await chrome.scripting.executeScript({
@@ -80,17 +98,15 @@ async function capture(tab) {
   } catch (e) {
     console.warn("[fullpage-shot] 注入消固定样式失败:", e.message);
   }
-  // 给浏览器一帧让样式生效、布局重排
   await sleep(120);
 
-  // 4. 截图（用 chrome.tabs.captureVisibleTab，不接 debugger，避免顶部"正在调试"横幅）
   let dataUrl;
   let widthPx;
   let heightPx;
   let truncated = false;
 
   try {
-    const result = await scrollStitch(tab);
+    const result = await scrollStitch(tab, { firstFrameDataUrl, stickyOverlays });
     dataUrl = result.dataUrl;
     widthPx = result.width;
     heightPx = result.height;
@@ -232,6 +248,46 @@ async function saveToDownloads(dataUrl, sourceUrl) {
   return filePath;
 }
 
+// 注入到目标 tab：检测所有 position:fixed/sticky 元素，返回它们的视口 rect。
+// 用于"sidebar/header 只贴一次"的视觉模拟。
+function detectStickyAndFixedRects() {
+  const VW = window.innerWidth;
+  const VH = window.innerHeight;
+  const rects = [];
+  const all = document.querySelectorAll("*");
+  for (const el of all) {
+    let cs;
+    try { cs = getComputedStyle(el); } catch (_) { continue; }
+    if (cs.position !== "fixed" && cs.position !== "sticky") continue;
+    if (cs.display === "none" || cs.visibility === "hidden") continue;
+    const r = el.getBoundingClientRect();
+    // 必须可见、有面积、在视口内
+    if (r.width < 30 || r.height < 30) continue;
+    if (r.right < 0 || r.bottom < 0 || r.left > VW || r.top > VH) continue;
+    rects.push({
+      left: Math.max(0, Math.round(r.left)),
+      top: Math.max(0, Math.round(r.top)),
+      width: Math.min(VW, Math.round(r.width)),
+      height: Math.min(VH, Math.round(r.height)),
+      area: Math.round(r.width * r.height)
+    });
+  }
+  // 去重 + 按面积排序（大的先贴，小的后贴覆盖）
+  rects.sort((a, b) => b.area - a.area);
+  // 简单去重：完全重叠的只留一个
+  const dedup = [];
+  for (const r of rects) {
+    const dup = dedup.some(d =>
+      Math.abs(d.left - r.left) < 5 &&
+      Math.abs(d.top - r.top) < 5 &&
+      Math.abs(d.width - r.width) < 5 &&
+      Math.abs(d.height - r.height) < 5
+    );
+    if (!dup) dedup.push(r);
+  }
+  return dedup;
+}
+
 // 注入到目标 tab：把所有 position:fixed / position:sticky 元素彻底**隐藏**（display:none）。
 // 之前用 absolute 不够 —— SPA 里 sidebar 仍然在视口内出现。
 // 直接 display:none 让它们彻底消失，截图就只有页面主内容，不会重复。
@@ -367,8 +423,10 @@ function preloadAllContent() {
 // 自己驱动滚动 → 截每段可见视口 → 拼接到 OffscreenCanvas
 // 用 chrome.tabs.captureVisibleTab（不需要 debugger，没有"正在调试"横幅）
 // 关键升级：先识别"真正在滚的那个容器"（window 或某个内部 div）。
-async function scrollStitch(tab) {
+async function scrollStitch(tab, opts) {
   const tabId = tab.id;
+  const firstFrameDataUrl = opts && opts.firstFrameDataUrl;
+  const stickyOverlays = (opts && opts.stickyOverlays) || [];
   // 步骤 1：在页面上下文里找出"最大可滚动元素"和它的尺寸/DPR，
   // 同时把它存到 window.__fpsHost，后续每一帧 scroll 都用同一个引用。
   const info = await execInPage(tabId, () => {
@@ -586,9 +644,31 @@ async function scrollStitch(tab) {
     bmp.close();
   }
 
+  // ── 贴 sticky overlays（sidebar / header 只贴一次，模拟"始终静止"）─────
+  // 仅 window 模式贴：inner 模式下 sticky 元素是相对内部容器定位的，关系复杂，先不处理
+  if (firstFrameDataUrl && stickyOverlays.length > 0 && info.mode === "window") {
+    try {
+      const ffBlob = await (await fetch(firstFrameDataUrl)).blob();
+      const ffBmp = await createImageBitmap(ffBlob);
+      // first frame 是物理分辨率（captureVisibleTab 输出），所以 src 坐标也乘 dpr
+      for (const ov of stickyOverlays) {
+        const sx = Math.round(ov.left * dpr);
+        const sy = Math.round(ov.top * dpr);
+        const sw = Math.round(ov.width * dpr);
+        const sh = Math.round(ov.height * dpr);
+        const dx = Math.round(ov.left * dpr);
+        const dy = Math.round(ov.top * dpr);
+        ctx.drawImage(ffBmp, sx, sy, sw, sh, dx, dy, sw, sh);
+      }
+      ffBmp.close();
+      console.log("[fullpage-shot] pasted", stickyOverlays.length, "sticky overlays");
+    } catch (e) {
+      console.warn("[fullpage-shot] sticky overlay paste failed:", e.message);
+    }
+  }
+
   const outBlob = await canvas.convertToBlob({ type: "image/png" });
   const dataUrl = await blobToDataUrl(outBlob);
-  // 返回 CSS 尺寸（meta 显示用）+ truncated 标志；实际 PNG 是物理分辨率
   return { dataUrl, width: w, height: info.height, truncated };
 }
 
