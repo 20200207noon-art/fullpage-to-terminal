@@ -1,0 +1,208 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title data-i18n="viewerTitle">Full-page screenshot</title>
+    <style>
+      :root {
+        --bg: #0e1116;
+        --panel: #161b22;
+        --border: #2a313c;
+        --text: #e6edf3;
+        --muted: #8b949e;
+        --accent: #2da44e;
+        --err-bg: #2d1417;
+        --err-bd: #6e2730;
+        --err-fg: #ffb4ba;
+      }
+      * { box-sizing: border-box; }
+      html, body {
+        margin: 0; padding: 0;
+        background: var(--bg); color: var(--text);
+        font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Helvetica Neue", Arial, sans-serif;
+      }
+
+      /* ── 大成功横幅：唯一的视觉重点 ───────────────────── */
+      .banner {
+        background: linear-gradient(180deg, #1f3a25, #15291a);
+        border-bottom: 2px solid var(--accent);
+        padding: 32px 24px;
+        text-align: center;
+        position: relative;
+      }
+      .banner-headline {
+        font-size: 32px;
+        font-weight: 800;
+        color: #b6f0c5;
+        margin: 0 0 10px;
+        letter-spacing: -0.3px;
+      }
+      .banner-headline .check {
+        color: var(--accent);
+        margin-right: 6px;
+      }
+      .banner-sub {
+        font-size: 18px;
+        color: #d8e8df;
+        font-weight: 500;
+      }
+      .banner-sub kbd {
+        display: inline-block;
+        padding: 4px 10px; margin: 0 2px;
+        font-family: ui-monospace, "SF Mono", Menlo, monospace;
+        font-size: 16px;
+        font-weight: 600;
+        background: #0d1117;
+        border: 1px solid #30363d;
+        border-radius: 6px;
+        box-shadow: 0 2px 0 rgba(0,0,0,0.5);
+        color: #fff;
+      }
+      .banner-saved {
+        margin-top: 14px;
+        font-size: 13px;
+        color: #a8c8b6;
+        font-family: ui-monospace, "SF Mono", Menlo, monospace;
+        word-break: break-all;
+        padding: 0 16px;
+      }
+      .banner-saved .pin { margin-right: 4px; }
+      .banner.fallback .banner-saved { color: #9ab0d4; }
+      .banner-sub .img-token {
+        display: inline-block;
+        background: rgba(255,255,255,0.12);
+        color: #fff;
+        border: 1px solid rgba(255,255,255,0.25);
+        border-radius: 5px;
+        padding: 1px 8px;
+        font-family: ui-monospace, "SF Mono", Menlo, monospace;
+        font-size: 14px;
+        font-weight: 700;
+      }
+      .banner-saveas {
+        position: absolute;
+        right: 20px; top: 20px;
+        appearance: none;
+        border: 1px solid var(--border);
+        background: rgba(0,0,0,0.3);
+        color: var(--text);
+        padding: 8px 14px; border-radius: 8px;
+        cursor: pointer; font-size: 12px;
+      }
+      .banner-saveas:hover { background: rgba(0,0,0,0.55); }
+      .banner-hotkey {
+        position: absolute;
+        left: 20px; top: 22px;
+        font-size: 11px;
+        color: rgba(255,255,255,0.45);
+        font-family: ui-monospace, "SF Mono", Menlo, monospace;
+        letter-spacing: 0.3px;
+      }
+      .banner-hotkey kbd {
+        display: inline-block;
+        padding: 1px 5px; margin: 0 1px;
+        background: rgba(0,0,0,0.35);
+        border: 1px solid rgba(255,255,255,0.15);
+        border-radius: 4px;
+        font-family: inherit;
+        font-size: 11px;
+        color: rgba(255,255,255,0.7);
+      }
+
+      /* 兜底状态：no-native-host 时变蓝（提示用户点按钮） */
+      .banner.fallback {
+        background: linear-gradient(180deg, #1c2842, #131a2b);
+        border-bottom-color: #58a6ff;
+      }
+      .banner.fallback .banner-headline { color: #c8d8ff; }
+      .banner.fallback .banner-headline .check { color: #58a6ff; }
+
+      /* 失败状态：变红 */
+      .banner.err {
+        background: linear-gradient(180deg, #3d1a1f, #2a1217);
+        border-bottom-color: #6e2730;
+      }
+      .banner.err .banner-headline { color: var(--err-fg); }
+
+      .img-wrap {
+        padding: 20px;
+        text-align: center;
+      }
+      .img-wrap img {
+        display: block;
+        margin: 0 auto;
+        max-width: 100%;
+        height: auto;
+        box-shadow: 0 4px 32px rgba(0,0,0,0.5);
+      }
+
+      .footer {
+        color: var(--muted);
+        font-size: 11px;
+        text-align: center;
+        padding: 12px 24px 32px;
+        word-break: break-all;
+      }
+
+      .error {
+        margin: 24px; padding: 16px;
+        background: var(--err-bg);
+        border: 1px solid var(--err-bd);
+        border-radius: 8px; color: var(--err-fg);
+        white-space: pre-wrap;
+        font-family: ui-monospace, monospace;
+        font-size: 13px;
+      }
+
+      /* fallback 模式下显示的"复制"按钮 */
+      .fallback-action {
+        text-align: center;
+        padding: 0 24px 16px;
+      }
+      #copyBtn {
+        appearance: none; border: 0;
+        background: #58a6ff; color: #0d1117;
+        font-size: 16px; font-weight: 700;
+        padding: 12px 28px;
+        border-radius: 10px; cursor: pointer;
+        box-shadow: 0 2px 12px rgba(88,166,255,0.4);
+      }
+      #copyBtn:hover { filter: brightness(1.08); }
+      #copyBtn:disabled {
+        background: var(--accent); color: #fff;
+        cursor: default; box-shadow: none;
+      }
+    </style>
+  </head>
+  <body>
+    <!-- 唯一的视觉重点：一句话告诉用户结果 -->
+    <div class="banner" id="banner">
+      <span class="banner-hotkey">⌨ <kbd>⌥</kbd>+<kbd>A</kbd></span>
+      <button class="banner-saveas" id="downloadBtn" type="button" data-i18n="btnSaveAs">⬇ Save as</button>
+      <h1 class="banner-headline" id="bannerHeadline">
+        <span class="check">✓</span> <span id="bannerTitle">Image copied</span>
+      </h1>
+      <p class="banner-sub" id="bannerSub">
+        Switch to <b>Claude Code</b> and press <kbd>⌘</kbd><kbd>V</kbd> — it'll attach as <span class="img-token">[Image&nbsp;#N]</span>
+      </p>
+      <p class="banner-saved" id="bannerSaved" style="display:none;">
+        <span class="pin">📁</span>Saved to <span id="bannerSavedPath"></span>
+      </p>
+    </div>
+
+    <!-- fallback 模式才显示的复制按钮 -->
+    <div class="fallback-action" id="fallbackAction" style="display:none;">
+      <button id="copyBtn" type="button">📋 Click to copy path</button>
+    </div>
+
+    <div class="img-wrap" id="imgWrap" style="display:none;">
+      <img id="shotImg" alt="screenshot">
+    </div>
+
+    <div id="errBox" class="error" style="display:none;"></div>
+    <div id="meta" class="footer"></div>
+
+    <script src="viewer.js"></script>
+  </body>
+</html>

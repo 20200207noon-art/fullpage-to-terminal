@@ -1,0 +1,22 @@
+# macOS
+.DS_Store
+**/.DS_Store
+
+# 临时文件
+*.log
+*.swp
+*.tmp
+*~
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# 编辑器
+.vscode/
+.idea/
+
+# 商店打包产物（每次重新打，不进 git）
+fullpage-shot.zip
+fullpage-to-terminal-store.zip

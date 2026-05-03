@@ -1,0 +1,52 @@
+{
+  "manifest_version": 3,
+  "name": "__MSG_extName__",
+  "version": "1.9.1",
+  "description": "__MSG_extDesc__",
+  "default_locale": "en",
+  "minimum_chrome_version": "116",
+  "permissions": [
+    "activeTab",
+    "tabs",
+    "scripting",
+    "offscreen",
+    "clipboardWrite",
+    "storage",
+    "unlimitedStorage",
+    "downloads",
+    "nativeMessaging"
+  ],
+  "host_permissions": ["<all_urls>"],
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "action": {
+    "default_title": "__MSG_actionTitle__",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
+  },
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+  "commands": {
+    "capture": {
+      "suggested_key": {
+        "default": "Alt+A",
+        "mac": "Alt+A"
+      },
+      "description": "__MSG_commandCapture__"
+    }
+  },
+  "web_accessible_resources": [
+    {
+      "resources": ["shutter.wav", "viewer.html"],
+      "matches": ["<all_urls>"]
+    }
+  ]
+}

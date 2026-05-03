@@ -1,0 +1,40 @@
+{
+  "extName":         { "message": "Fullpage to Terminal" },
+  "extDesc":         { "message": "Capture the full page → paste it straight into Claude Code (or any terminal-based AI CLI) as [Image #N]." },
+  "actionTitle":     { "message": "Capture full page (Option+A)" },
+  "commandCapture":  { "message": "Capture the full current tab (Option+A)" },
+
+  "viewerTitle":     { "message": "Full-page screenshot" },
+  "btnCopyImage":    { "message": "📋 Copy image" },
+  "btnCopyPath":     { "message": "📋 Copy path (fallback)" },
+  "btnSaveAs":       { "message": "⬇ Save as" },
+  "hintPaste":       { "message": "Switch to terminal, press ⌘V then Enter" },
+  "hintSaved":       { "message": "📁 Saved to ~/Downloads" },
+  "hintHotkey":      { "message": "⌨ Hotkey: Option + A   (or click the camera icon in the toolbar)" },
+
+  "stateCopiedImage":   { "message": "✓ Image copied · switch to Claude Code and press ⌘V" },
+  "stepCaptured":       { "message": "Captured" },
+  "stepCopied":         { "message": "Copied to clipboard" },
+  "stepPaste":          { "message": "Paste in your terminal" },
+  "previewLabel":       { "message": "What you'll see when you press ⌘V in Claude Code:" },
+  "stateCopiedPath":    { "message": "✓ Path copied · switch to terminal and press ⌘V" },
+  "stateAutoCopiedPath":{ "message": "✓ Path auto-copied · switch to terminal and press ⌘V" },
+
+  "toastImageCopied":   { "message": "Image copied (file reference)" },
+  "toastPathCopied":    { "message": "Path copied" },
+  "toastPathAutoCopied":{ "message": "Path auto-copied" },
+  "toastDownloadStart": { "message": "Download started" },
+  "toastCopyFailed":    { "message": "Copy failed: $err$", "placeholders": { "err": { "content": "$1" } } },
+
+  "errNoShot":          { "message": "No screenshot to display. Go back to the page and press Option+A or click the extension icon." },
+  "errCaptureFailed":   { "message": "Capture failed:\n\n$err$", "placeholders": { "err": { "content": "$1" } } },
+  "errSaveFailed":      { "message": "Save to disk failed: $err$", "placeholders": { "err": { "content": "$1" } } },
+  "errNoSavedPath":     { "message": "Image not saved to disk." },
+  "errFallbackHint":    { "message": "Click \"⬇ Save as\" to save manually." },
+  "errNativeHostMissing": { "message": "Native helper not installed. Can't copy the image file directly.\n\nInstall it (one time, takes seconds):\n  cd /Users/bo-bot/fullpage-shot/native-host\n  ./install.sh <extensionID>\n\n(Find the extension ID at chrome://extensions on the Fullpage Shot card.)\n\nWithout it, the button below will fall back to copying the @path text." },
+  "errNativeHostFailed":{ "message": "Native helper call failed: $err$\n\nThe button below will fall back to copying @path text.", "placeholders": { "err": { "content": "$1" } } },
+  "errLoadFailed":      { "message": "Load failed: $err$", "placeholders": { "err": { "content": "$1" } } },
+
+  "metaSavedTo":        { "message": "saved to" },
+  "metaTruncated":      { "message": "⚠️ truncated above $px$ px", "placeholders": { "px": { "content": "$1" } } }
+}
