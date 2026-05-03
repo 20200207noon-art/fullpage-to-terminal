@@ -372,8 +372,12 @@ async function scrollStitch(tab) {
   // 步骤 1：在页面上下文里找出"最大可滚动元素"和它的尺寸/DPR，
   // 同时把它存到 window.__fpsHost，后续每一帧 scroll 都用同一个引用。
   const info = await execInPage(tabId, () => {
-    let bestEl = null;
-    let bestArea = 0;
+    const VW = window.innerWidth;
+    const VH = window.innerHeight;
+    // 候选必须是"主内容区"——宽度 >= viewport 一半，否则就是 sidebar / aside / 抽屉
+    const MIN_HOST_WIDTH = Math.max(400, VW * 0.5);
+
+    const candidates = [];
     const all = document.querySelectorAll("*");
     for (const el of all) {
       try {
@@ -382,25 +386,41 @@ async function scrollStitch(tab) {
         if (oy !== "auto" && oy !== "scroll") continue;
         const sh = el.scrollHeight;
         const ch = el.clientHeight;
+        const cw = el.clientWidth;
         if (sh - ch < 200) continue;
+        // 关键过滤：太窄的容器肯定不是主内容（typically sidebar 250-300px）
+        if (cw < MIN_HOST_WIDTH) continue;
+        // 排除被隐藏的元素
+        if (cs.display === "none" || cs.visibility === "hidden") continue;
+        // 排除明显的 aside/nav 角色
+        const tag = el.tagName.toLowerCase();
+        const role = el.getAttribute("role");
+        if (tag === "aside" || tag === "nav") continue;
+        if (role === "navigation" || role === "complementary") continue;
+
         const area = (sh - ch) * ch;
-        if (area > bestArea) {
-          bestArea = area;
-          bestEl = el;
-        }
+        candidates.push({ el, area, sh, ch, cw, tag });
       } catch (_) {}
     }
+    // 按 area 排序选最大
+    candidates.sort((a, b) => b.area - a.area);
+    const bestEl = candidates[0] ? candidates[0].el : null;
 
-    const winScrollable =
-      (document.documentElement.scrollHeight - window.innerHeight) | 0;
+    // 调试日志
+    console.log("[fullpage-shot] inner candidates:", candidates.length);
+    candidates.slice(0, 5).forEach((c, i) => {
+      console.log(`  #${i} <${c.tag}> w=${c.cw} ch=${c.ch} sh=${c.sh} area=${c.area}`);
+    });
+
+    const winScrollable = (document.documentElement.scrollHeight - VH) | 0;
     let mode = "window";
     if (bestEl) {
       const innerScrollable = bestEl.scrollHeight - bestEl.clientHeight;
-      // 内部容器可滚量比 window 大很多时才采用，避免误判
       if (innerScrollable > Math.max(winScrollable * 2, 800)) {
         mode = "inner";
       }
     }
+    console.log(`[fullpage-shot] mode=${mode}, winScrollable=${winScrollable}`);
     window.__fpsHost = mode === "inner" ? bestEl : null;
     window.__fpsMode = mode;
 
