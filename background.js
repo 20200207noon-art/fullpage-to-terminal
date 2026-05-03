@@ -594,9 +594,11 @@ async function playShutter() {
 async function reportError(tab, err) {
   console.error("[fullpage-shot]", err);
   const msg = (err && err.message) || String(err);
+  // 把出问题的 tab URL 也带上，方便用户/我们诊断
+  const fullMsg = tab && tab.url ? `${msg}\n\n📍 Tried to capture: ${tab.url}` : msg;
   try {
     await chrome.storage.local.set({
-      lastShot: { error: msg, capturedAt: Date.now() }
+      lastShot: { error: fullMsg, capturedAt: Date.now() }
     });
     await chrome.tabs.create({ url: chrome.runtime.getURL("viewer.html") });
   } catch (_) {}
