@@ -43,12 +43,15 @@ chrome.commands.onCommand.addListener((command) => {
 });
 
 async function capture(tab) {
-  if (!tab || !tab.id) throw new Error("没有可用的当前标签页");
+  if (!tab || !tab.id) throw new Error("No active tab. Click a normal web page first, then press the hotkey.");
   const url = tab.url || "";
   if (BLOCKED_SCHEMES.some((s) => url.startsWith(s))) {
     throw new Error(
-      `Chrome 内部页面不能截图：\n${url}\n\n（${BLOCKED_SCHEMES.join("、")} 等都被 Chrome 禁止扩展访问，没法绕。）`
+      `Cannot capture this page:\n${url}\n\nChrome blocks extensions from accessing internal pages (chrome://, chrome-extension://, view-source:, etc.).\n\nSwitch to a regular web page (like https://example.com) and try again.`
     );
+  }
+  if (!url) {
+    throw new Error("Active tab has no URL — wait for the page to finish loading, then try again.");
   }
 
   // 1. 注入预滚动脚本，触发懒加载（很多瀑布流/Reddit/Twitter 不滚到底就不渲染）
@@ -426,7 +429,9 @@ async function scrollStitch(tab) {
     };
   });
 
-  if (!info) throw new Error("无法识别滚动容器");
+  if (!info) throw new Error(
+    `Could not access page content for capture.\n\nLikely causes:\n• The page has a strict Content-Security-Policy that blocks script injection\n• The page didn't finish loading\n• You're on an internal page (chrome://, etc.)\n\nReload the page and try again. If it still fails, check Service Worker console at chrome://extensions for details.`
+  );
   console.log("[fullpage-shot] scroll info:", info);
 
   const w = Math.max(1, info.width);
