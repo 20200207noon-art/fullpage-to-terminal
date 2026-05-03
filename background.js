@@ -614,63 +614,87 @@ async function scrollStitch(tab, opts) {
     [origScrollY || 0]
   ).catch(() => {});
 
-  // 拼接 —— canvas 物理分辨率
-  // inner 模式下 canvas 宽 = viewport（含 sidebar），main 内容贴在 main.rectLeft 偏移处
-  // window 模式下 canvas 宽 = main width（页面整宽就是 viewport）
+  // ── 关键修复：从实际 bmp 像素反推真实 dpr，不信 window.devicePixelRatio ──
+  // 不少配置下（外接 5K 显示器走低分辨率、用户自定义 zoom 等）devicePixelRatio
+  // 报告的值不是 captureVisibleTab 实际输出的物理像素倍率。
+  // 我们先解码第一段截图，从 bmp.width / viewportCSS 算真实倍率，再据此建 canvas。
   const isInner = info.mode === "inner";
-  const baseCanvasW = isInner ? (info.viewportW || w) : w;
-  const canvasW = Math.round(baseCanvasW * dpr);
-  const canvasH = Math.round(h * dpr);
+  const baseCanvasW_css = isInner ? (info.viewportW || w) : w;
+
+  // 预解码所有段（顺便从第一段算 realDpr）
+  const decodedSlices = [];
+  let realDpr = dpr;
+  for (let i = 0; i < slices.length; i++) {
+    const s = slices[i];
+    const blob = await (await fetch(s.dataUrl)).blob();
+    const bmp = await createImageBitmap(blob);
+    if (i === 0) {
+      const cssVW = info.viewportW || (info.windowVH ? Math.round(bmp.width / dpr) : bmp.width);
+      const measured = bmp.width / cssVW;
+      // 不要用奇怪的小数；只接受 1, 1.25, 1.5, 2, 2.5, 3
+      const allowed = [1, 1.25, 1.5, 2, 2.5, 3];
+      let best = dpr;
+      let bestDelta = Infinity;
+      for (const candidate of allowed) {
+        const d = Math.abs(candidate - measured);
+        if (d < bestDelta) { bestDelta = d; best = candidate; }
+      }
+      realDpr = best;
+      console.log(`[fullpage-shot] dpr: window.devicePixelRatio=${dpr}, measured=${measured.toFixed(3)}, using=${realDpr}`);
+    }
+    decodedSlices.push({ ...s, bmp });
+  }
+
+  const canvasW = Math.round(baseCanvasW_css * realDpr);
+  const canvasH = Math.round(h * realDpr);
   const canvas = new OffscreenCanvas(canvasW, canvasH);
   const ctx = canvas.getContext("2d");
   if (!ctx) throw new Error("无法创建 OffscreenCanvas 2D context");
+  // 关键：禁用插值 —— src 和 dst 同尺寸时不应有任何重采样
+  ctx.imageSmoothingEnabled = false;
   ctx.fillStyle = "#ffffff";
   ctx.fillRect(0, 0, canvasW, canvasH);
 
-  const mainWidthPx = Math.round(w * dpr);  // main 区域物理宽度
+  const mainWidthPx = Math.round(w * realDpr);
 
-  for (const s of slices) {
-    const blob = await (await fetch(s.dataUrl)).blob();
-    const bmp = await createImageBitmap(blob);
+  for (const s of decodedSlices) {
+    const bmp = s.bmp;
     const drawH = Math.min(vh, h - s.y);
     if (drawH <= 0) {
       bmp.close();
       continue;
     }
-    const dstY = Math.round(s.y * dpr);
-    const dstH = Math.round(drawH * dpr);
+    const dstY = Math.round(s.y * realDpr);
+    const dstH = Math.round(drawH * realDpr);
     if (isInner) {
-      // 用每段当时的 rect（不是初始的），应对虚拟列表 re-render 后位置漂移
       const rl = (typeof s.rectLeft === "number") ? s.rectLeft : info.rectLeft;
       const rt = (typeof s.rectTop === "number") ? s.rectTop : info.rectTop;
-      const srcX = Math.round(rl * dpr);
-      const srcY = Math.round(rt * dpr);
-      const dstX = Math.round(rl * dpr);  // 贴到 canvas 中 main 在 viewport 里的位置
+      const srcX = Math.round(rl * realDpr);
+      const srcY = Math.round(rt * realDpr);
+      const dstX = Math.round(rl * realDpr);
       ctx.drawImage(bmp, srcX, srcY, mainWidthPx, dstH, dstX, dstY, mainWidthPx, dstH);
     } else {
-      // window 模式：bmp 顶端开始，按物理像素 1:1 写
       ctx.drawImage(bmp, 0, 0, canvasW, dstH, 0, dstY, canvasW, dstH);
     }
     bmp.close();
   }
 
-  // ── 贴 sticky overlays（sidebar / header 只贴一次，模拟"始终静止"）─────
-  // window 和 inner 两种模式都贴。坐标系都是 viewport 像素 → canvas 像素 1:1
+  // ── 贴 sticky overlays（用 realDpr，不是 dpr）─────────
   if (firstFrameDataUrl && stickyOverlays.length > 0) {
     try {
       const ffBlob = await (await fetch(firstFrameDataUrl)).blob();
       const ffBmp = await createImageBitmap(ffBlob);
       for (const ov of stickyOverlays) {
-        const sx = Math.round(ov.left * dpr);
-        const sy = Math.round(ov.top * dpr);
-        const sw = Math.round(ov.width * dpr);
-        const sh = Math.round(ov.height * dpr);
-        const dx = Math.round(ov.left * dpr);
-        const dy = Math.round(ov.top * dpr);
+        const sx = Math.round(ov.left * realDpr);
+        const sy = Math.round(ov.top * realDpr);
+        const sw = Math.round(ov.width * realDpr);
+        const sh = Math.round(ov.height * realDpr);
+        const dx = Math.round(ov.left * realDpr);
+        const dy = Math.round(ov.top * realDpr);
         ctx.drawImage(ffBmp, sx, sy, sw, sh, dx, dy, sw, sh);
       }
       ffBmp.close();
-      console.log("[fullpage-shot] pasted", stickyOverlays.length, "sticky overlays in", info.mode, "mode");
+      console.log("[fullpage-shot] pasted", stickyOverlays.length, "sticky overlays in", info.mode, "mode at realDpr=" + realDpr);
     } catch (e) {
       console.warn("[fullpage-shot] sticky overlay paste failed:", e.message);
     }
