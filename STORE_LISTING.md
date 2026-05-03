@@ -74,9 +74,9 @@ PRIVACY
 
 This extension does NOT collect, store, transmit, or share any of your data. Everything happens 100% locally. No analytics, no telemetry, no servers, no third-party APIs.
 
-Full privacy policy: https://github.com/<your-username>/fullpage-to-terminal/blob/main/PRIVACY.md
+Full privacy policy: https://github.com/20200207noon-art/fullpage-to-terminal/blob/main/PRIVACY.md
 
-Source code: https://github.com/<your-username>/fullpage-to-terminal
+Source code: https://github.com/20200207noon-art/fullpage-to-terminal
 ```
 
 ---
@@ -150,7 +150,7 @@ Chrome 商店上架时会让你填一个 "Privacy practices" 表单，逐项回�
 2. 上传整个 `/Users/bo-bot/fullpage-shot/` 内容（包含 native-host/、PRIVACY.md、tools/）
 3. README.md 已经写好了
 4. Settings → Pages → Source: `Deploy from a branch` → main / root → **Save**
-5. 等几分钟，PRIVACY.md 就能通过 `https://<你的用户名>.github.io/fullpage-to-terminal/PRIVACY` 访问
+5. 等几分钟，PRIVACY.md 就能通过 `https://20200207noon-art.github.io/fullpage-to-terminal/PRIVACY` 访问
 
 ### 第 2 步 — 注册 Chrome 开发者账号（5 分钟，$5 USD）
 1. https://chrome.google.com/webstore/devconsole/
@@ -164,7 +164,7 @@ Chrome 商店上架时会让你填一个 "Privacy practices" 表单，逐项回�
 3. 按本文档 §1-§6 填表
 4. 上传宣传图（§7）
 5. 至少要传 1 张截图（你装上扩展自己截一下 viewer 页面就行）
-6. Privacy policy URL 填：`https://<你的用户名>.github.io/fullpage-to-terminal/PRIVACY`
+6. Privacy policy URL 填：`https://20200207noon-art.github.io/fullpage-to-terminal/PRIVACY`
 7. 点 "Submit for review"
 
 ### 第 4 步 — 等审核（1-7 天）

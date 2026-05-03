@@ -232,14 +232,15 @@ async function saveToDownloads(dataUrl, sourceUrl) {
   return filePath;
 }
 
-// 注入到目标 tab：把所有 position:fixed / position:sticky 元素改成 absolute，
-// 同时把它们 inline 写到一个"恢复表"挂在 window 上，截图后通过 restoreStickyAndFixed 还原。
-// 这是 captureBeyondViewport 下解决 sticky-header 重复出现的标准做法。
+// 注入到目标 tab：把所有 position:fixed / position:sticky 元素彻底**隐藏**（display:none）。
+// 之前用 absolute 不够 —— SPA 里 sidebar 仍然在视口内出现。
+// 直接 display:none 让它们彻底消失，截图就只有页面主内容，不会重复。
+// 截图完成后通过 restoreStickyAndFixed 还原。
 function neutralizeStickyAndFixed() {
   const KEY = "__fullpageShotNeutralized__";
-  if (window[KEY]) return; // 防止重复注入
+  if (window[KEY]) return;
   const restored = [];
-  // 1. 全局禁用动画/过渡，避免截图时元素正在过渡
+  // 1. 全局禁用动画/过渡
   const styleEl = document.createElement("style");
   styleEl.id = "__fullpage_shot_anim_off__";
   styleEl.textContent =
@@ -247,22 +248,26 @@ function neutralizeStickyAndFixed() {
     "transition-duration:0s !important;transition-delay:0s !important;}";
   (document.head || document.documentElement).appendChild(styleEl);
 
-  // 2. 遍历所有元素，把 fixed/sticky 改成 absolute（保留原 inline 样式）
+  // 2. 遍历所有元素，找 fixed/sticky —— 彻底 display:none
   const all = document.querySelectorAll("*");
+  let hiddenCount = 0;
   for (const el of all) {
-    const cs = getComputedStyle(el);
-    if (cs.position === "fixed" || cs.position === "sticky") {
+    let cs;
+    try { cs = getComputedStyle(el); } catch (_) { continue; }
+    const pos = cs.position;
+    if (pos === "fixed" || pos === "sticky") {
       restored.push({
         el,
-        prevPosition: el.style.position,
-        prevTop: el.style.top,
-        prevLeft: el.style.left
+        prevDisplay: el.style.display,
+        prevVisibility: el.style.visibility
       });
-      el.style.setProperty("position", "absolute", "important");
+      el.style.setProperty("display", "none", "important");
+      hiddenCount++;
     }
   }
+  console.log("[fullpage-shot] hidden", hiddenCount, "fixed/sticky elements");
 
-  // 3. 顺手把 body/html 的 overflow:hidden 解掉，防止截图被裁
+  // 3. body/html overflow:hidden 解掉
   const htmlEl = document.documentElement;
   const bodyEl = document.body;
   const htmlPrevOverflow = htmlEl ? htmlEl.style.overflow : "";
@@ -286,10 +291,10 @@ function restoreStickyAndFixed() {
   if (styleEl && styleEl.parentNode) styleEl.parentNode.removeChild(styleEl);
   for (const r of state.restored) {
     if (!r.el) continue;
-    if (r.prevPosition) r.el.style.position = r.prevPosition;
-    else r.el.style.removeProperty("position");
-    if (r.prevTop != null) r.el.style.top = r.prevTop;
-    if (r.prevLeft != null) r.el.style.left = r.prevLeft;
+    if (r.prevDisplay) r.el.style.display = r.prevDisplay;
+    else r.el.style.removeProperty("display");
+    if (r.prevVisibility) r.el.style.visibility = r.prevVisibility;
+    else r.el.style.removeProperty("visibility");
   }
   if (document.documentElement) {
     document.documentElement.style.overflow = state.htmlPrevOverflow || "";
@@ -463,19 +468,30 @@ async function scrollStitch(tab) {
 
   while (scrollY < h && safety < SAFETY_CAP) {
     safety++;
-    const actualY = await execInPage(
+    // 每段都重新滚 + 重新读 host 当前 rect（虚拟列表 re-render 后 rect 可能变）
+    const scrollResult = await execInPage(
       tabId,
       (yy) => {
+        let actualY = 0;
+        let rectLeft = 0, rectTop = 0, hostW = 0, hostH = 0;
         if (window.__fpsMode === "inner" && window.__fpsHost) {
           window.__fpsHost.scrollTop = yy;
-          return window.__fpsHost.scrollTop || 0;
+          actualY = window.__fpsHost.scrollTop || 0;
+          // 滚动后等一帧再读 rect（让浏览器布局更新）
+          const rect = window.__fpsHost.getBoundingClientRect();
+          rectLeft = Math.max(0, Math.round(rect.left));
+          rectTop = Math.max(0, Math.round(rect.top));
+          hostW = window.__fpsHost.clientWidth | 0;
+          hostH = window.__fpsHost.clientHeight | 0;
+        } else {
+          window.scrollTo(0, yy);
+          actualY = window.scrollY || 0;
         }
-        window.scrollTo(0, yy);
-        return window.scrollY || 0;
+        return { actualY, rectLeft, rectTop, hostW, hostH };
       },
       [scrollY]
     );
-    const actualYNum = typeof actualY === "number" ? actualY : scrollY;
+    const actualYNum = (scrollResult && typeof scrollResult.actualY === "number") ? scrollResult.actualY : scrollY;
 
     // 600ms：给虚拟列表渲染时间 + captureVisibleTab 配额限制（Chrome 每秒最多 2 次）
     await sleep(600);
@@ -488,11 +504,17 @@ async function scrollStitch(tab) {
         resolve(du);
       });
     });
-    slices.push({ y: actualYNum, dataUrl: visDataUrl });
+    // 每段记下当时的 rect（inner mode 用），不再依赖初始 info.rectLeft/rectTop
+    slices.push({
+      y: actualYNum,
+      dataUrl: visDataUrl,
+      rectLeft: scrollResult ? scrollResult.rectLeft : 0,
+      rectTop: scrollResult ? scrollResult.rectTop : 0
+    });
 
-    if (actualYNum === lastActualY) break; // 已到底，钳住不动
+    if (actualYNum === lastActualY) break; // 已到底
     lastActualY = actualYNum;
-    // 下一段往前留 40px 重叠 —— 防止任何对齐误差/sticky 偏移让相邻两段之间露白底
+    // 下一段往前留 40px 重叠
     const OVERLAP = 40;
     scrollY = actualYNum + Math.max(80, vh - OVERLAP);
   }
@@ -531,9 +553,11 @@ async function scrollStitch(tab) {
     const dstW = canvasW;
     const dstH = Math.round(drawH * dpr);
     if (info.mode === "inner") {
-      // bmp 是物理像素整屏；裁出内部容器对应的那块（也用物理像素），1:1 画到画布
-      const srcX = Math.round(info.rectLeft * dpr);
-      const srcY = Math.round(info.rectTop * dpr);
+      // 用每段当时的 rect（不是初始的），应对虚拟列表 re-render 后位置漂移
+      const rl = (typeof s.rectLeft === "number") ? s.rectLeft : info.rectLeft;
+      const rt = (typeof s.rectTop === "number") ? s.rectTop : info.rectTop;
+      const srcX = Math.round(rl * dpr);
+      const srcY = Math.round(rt * dpr);
       ctx.drawImage(bmp, srcX, srcY, dstW, dstH, 0, dstY, dstW, dstH);
     } else {
       // window 模式：bmp 顶端开始，按物理像素 1:1 写
