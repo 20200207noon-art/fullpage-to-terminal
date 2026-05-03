@@ -490,7 +490,9 @@ async function scrollStitch(tab, opts) {
         dpr,
         width: bestEl.clientWidth | 0,
         height: bestEl.scrollHeight | 0,
+        viewportW: VW,
         viewportH: bestEl.clientHeight | 0,
+        windowVH: VH,
         rectLeft: Math.max(0, Math.round(rect.left)),
         rectTop: Math.max(0, Math.round(rect.top))
       };
@@ -501,12 +503,14 @@ async function scrollStitch(tab, opts) {
       width:
         (document.documentElement.scrollWidth | 0) ||
         (document.body && document.body.scrollWidth) ||
-        window.innerWidth,
+        VW,
       height:
         (document.documentElement.scrollHeight | 0) ||
         (document.body && document.body.scrollHeight) ||
-        window.innerHeight,
-      viewportH: window.innerHeight | 0,
+        VH,
+      viewportW: VW,
+      viewportH: VH,
+      windowVH: VH,
       rectLeft: 0,
       rectTop: 0
     };
@@ -610,14 +614,20 @@ async function scrollStitch(tab, opts) {
     [origScrollY || 0]
   ).catch(() => {});
 
-  // 拼接 —— canvas 用物理分辨率（×dpr），1:1 写入截图字节，零缩放零损失
-  const canvasW = Math.round(w * dpr);
+  // 拼接 —— canvas 物理分辨率
+  // inner 模式下 canvas 宽 = viewport（含 sidebar），main 内容贴在 main.rectLeft 偏移处
+  // window 模式下 canvas 宽 = main width（页面整宽就是 viewport）
+  const isInner = info.mode === "inner";
+  const baseCanvasW = isInner ? (info.viewportW || w) : w;
+  const canvasW = Math.round(baseCanvasW * dpr);
   const canvasH = Math.round(h * dpr);
   const canvas = new OffscreenCanvas(canvasW, canvasH);
   const ctx = canvas.getContext("2d");
   if (!ctx) throw new Error("无法创建 OffscreenCanvas 2D context");
   ctx.fillStyle = "#ffffff";
   ctx.fillRect(0, 0, canvasW, canvasH);
+
+  const mainWidthPx = Math.round(w * dpr);  // main 区域物理宽度
 
   for (const s of slices) {
     const blob = await (await fetch(s.dataUrl)).blob();
@@ -628,29 +638,28 @@ async function scrollStitch(tab, opts) {
       continue;
     }
     const dstY = Math.round(s.y * dpr);
-    const dstW = canvasW;
     const dstH = Math.round(drawH * dpr);
-    if (info.mode === "inner") {
+    if (isInner) {
       // 用每段当时的 rect（不是初始的），应对虚拟列表 re-render 后位置漂移
       const rl = (typeof s.rectLeft === "number") ? s.rectLeft : info.rectLeft;
       const rt = (typeof s.rectTop === "number") ? s.rectTop : info.rectTop;
       const srcX = Math.round(rl * dpr);
       const srcY = Math.round(rt * dpr);
-      ctx.drawImage(bmp, srcX, srcY, dstW, dstH, 0, dstY, dstW, dstH);
+      const dstX = Math.round(rl * dpr);  // 贴到 canvas 中 main 在 viewport 里的位置
+      ctx.drawImage(bmp, srcX, srcY, mainWidthPx, dstH, dstX, dstY, mainWidthPx, dstH);
     } else {
       // window 模式：bmp 顶端开始，按物理像素 1:1 写
-      ctx.drawImage(bmp, 0, 0, dstW, dstH, 0, dstY, dstW, dstH);
+      ctx.drawImage(bmp, 0, 0, canvasW, dstH, 0, dstY, canvasW, dstH);
     }
     bmp.close();
   }
 
   // ── 贴 sticky overlays（sidebar / header 只贴一次，模拟"始终静止"）─────
-  // 仅 window 模式贴：inner 模式下 sticky 元素是相对内部容器定位的，关系复杂，先不处理
-  if (firstFrameDataUrl && stickyOverlays.length > 0 && info.mode === "window") {
+  // window 和 inner 两种模式都贴。坐标系都是 viewport 像素 → canvas 像素 1:1
+  if (firstFrameDataUrl && stickyOverlays.length > 0) {
     try {
       const ffBlob = await (await fetch(firstFrameDataUrl)).blob();
       const ffBmp = await createImageBitmap(ffBlob);
-      // first frame 是物理分辨率（captureVisibleTab 输出），所以 src 坐标也乘 dpr
       for (const ov of stickyOverlays) {
         const sx = Math.round(ov.left * dpr);
         const sy = Math.round(ov.top * dpr);
@@ -661,7 +670,7 @@ async function scrollStitch(tab, opts) {
         ctx.drawImage(ffBmp, sx, sy, sw, sh, dx, dy, sw, sh);
       }
       ffBmp.close();
-      console.log("[fullpage-shot] pasted", stickyOverlays.length, "sticky overlays");
+      console.log("[fullpage-shot] pasted", stickyOverlays.length, "sticky overlays in", info.mode, "mode");
     } catch (e) {
       console.warn("[fullpage-shot] sticky overlay paste failed:", e.message);
     }
