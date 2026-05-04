@@ -248,43 +248,95 @@ async function saveToDownloads(dataUrl, sourceUrl) {
   return filePath;
 }
 
-// 注入到目标 tab：检测所有 position:fixed/sticky 元素，返回它们的视口 rect。
-// 用于"sidebar/header 只贴一次"的视觉模拟。
+// 注入到目标 tab：检测所有"视觉固定"的元素（不只是 CSS fixed/sticky）。
+// 方法：滚动一段距离，比较前后 boundingRect.top —— 没移动的元素就是固定的。
+// 这能捕获 absolute/relative 但布局上"在 main header 顶部"的元素（Claude.ai 的 Share 按钮就是这种）。
 function detectStickyAndFixedRects() {
   const VW = window.innerWidth;
   const VH = window.innerHeight;
-  const rects = [];
-  const all = document.querySelectorAll("*");
-  for (const el of all) {
+
+  // 1. 检测主滚动容器（和 scrollStitch 用同样算法）
+  const MIN_HOST_WIDTH = Math.max(400, VW * 0.5);
+  let bestHost = null;
+  let bestArea = 0;
+  for (const el of document.querySelectorAll("*")) {
     let cs;
     try { cs = getComputedStyle(el); } catch (_) { continue; }
-    if (cs.position !== "fixed" && cs.position !== "sticky") continue;
+    const oy = cs.overflowY;
+    if (oy !== "auto" && oy !== "scroll") continue;
+    if (cs.display === "none" || cs.visibility === "hidden") continue;
+    const sh = el.scrollHeight, ch = el.clientHeight, cw = el.clientWidth;
+    if (sh - ch < 200 || cw < MIN_HOST_WIDTH) continue;
+    const tag = el.tagName.toLowerCase();
+    const role = el.getAttribute("role");
+    if (tag === "aside" || tag === "nav") continue;
+    if (role === "navigation" || role === "complementary") continue;
+    const area = (sh - ch) * ch;
+    if (area > bestArea) { bestArea = area; bestHost = el; }
+  }
+  const winScrollable = (document.documentElement.scrollHeight - VH) | 0;
+  const useInner = bestHost && (bestHost.scrollHeight - bestHost.clientHeight) > Math.max(winScrollable * 2, 800);
+
+  // 2. 收集所有可见元素的初始位置
+  const candidates = [];
+  for (const el of document.querySelectorAll("*")) {
+    let cs;
+    try { cs = getComputedStyle(el); } catch (_) { continue; }
     if (cs.display === "none" || cs.visibility === "hidden") continue;
     const r = el.getBoundingClientRect();
-    // 必须可见、有面积、在视口内
-    if (r.width < 30 || r.height < 30) continue;
+    if (r.width < 30 || r.height < 20) continue;
     if (r.right < 0 || r.bottom < 0 || r.left > VW || r.top > VH) continue;
-    rects.push({
-      left: Math.max(0, Math.round(r.left)),
-      top: Math.max(0, Math.round(r.top)),
-      width: Math.min(VW, Math.round(r.width)),
-      height: Math.min(VH, Math.round(r.height)),
-      area: Math.round(r.width * r.height)
-    });
+    candidates.push({ el, r0: { l: r.left, t: r.top, w: r.width, h: r.height } });
   }
-  // 去重 + 按面积排序（大的先贴，小的后贴覆盖）
-  rects.sort((a, b) => b.area - a.area);
-  // 简单去重：完全重叠的只留一个
+
+  // 3. 滚一段
+  const SCROLL_TEST = 200;
+  let restoreScroll = 0;
+  if (useInner) {
+    restoreScroll = bestHost.scrollTop || 0;
+    bestHost.scrollTop = restoreScroll + SCROLL_TEST;
+  } else {
+    restoreScroll = window.scrollY;
+    window.scrollBy(0, SCROLL_TEST);
+  }
+
+  // 4. 重测 + 找"位置没变"的元素 = 视觉固定
+  const stuck = [];
+  for (const c of candidates) {
+    const r1 = c.el.getBoundingClientRect();
+    const dt = Math.abs(r1.top - c.r0.t);
+    const dl = Math.abs(r1.left - c.r0.l);
+    // top/left 移动 < 5px = 固定
+    if (dt < 5 && dl < 5) {
+      stuck.push({
+        left: Math.max(0, Math.round(c.r0.l)),
+        top: Math.max(0, Math.round(c.r0.t)),
+        width: Math.min(VW, Math.round(c.r0.w)),
+        height: Math.min(VH, Math.round(c.r0.h)),
+        area: Math.round(c.r0.w * c.r0.h)
+      });
+    }
+  }
+
+  // 5. 滚回去
+  if (useInner) {
+    bestHost.scrollTop = restoreScroll;
+  } else {
+    window.scrollTo(0, restoreScroll);
+  }
+
+  // 6. 去重：包含关系 → 只留外层（避免 sidebar 内的小 div 重复贴）
+  stuck.sort((a, b) => b.area - a.area);
   const dedup = [];
-  for (const r of rects) {
-    const dup = dedup.some(d =>
-      Math.abs(d.left - r.left) < 5 &&
-      Math.abs(d.top - r.top) < 5 &&
-      Math.abs(d.width - r.width) < 5 &&
-      Math.abs(d.height - r.height) < 5
+  for (const r of stuck) {
+    const containedByExisting = dedup.some(d =>
+      r.left >= d.left - 2 && r.top >= d.top - 2 &&
+      r.left + r.width <= d.left + d.width + 2 &&
+      r.top + r.height <= d.top + d.height + 2
     );
-    if (!dup) dedup.push(r);
+    if (!containedByExisting) dedup.push(r);
   }
+  console.log(`[fullpage-shot] stuck elements: ${candidates.length} candidates, ${stuck.length} stuck, ${dedup.length} after dedup`);
   return dedup;
 }
 
