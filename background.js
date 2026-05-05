@@ -54,6 +54,19 @@ async function capture(tab) {
     throw new Error("Active tab has no URL — wait for the page to finish loading, then try again.");
   }
 
+  // 0.5 装进度 UI（让用户看到"扩展正在工作"，页面滚动是预期的）
+  try {
+    await chrome.scripting.executeScript({
+      target: { tabId: tab.id, allFrames: false },
+      func: installProgressUI
+    });
+    await chrome.scripting.executeScript({
+      target: { tabId: tab.id, allFrames: false },
+      func: updateProgressUI,
+      args: [{ text: "Preparing page...", percent: 5 }]
+    });
+  } catch (_) {}
+
   // 1. 注入预滚动脚本，触发懒加载（很多瀑布流/Reddit/Twitter 不滚到底就不渲染）
   try {
     await chrome.scripting.executeScript({
@@ -72,6 +85,15 @@ async function capture(tab) {
   let firstFrameDataUrl = null;
   let stickyOverlays = [];
   try {
+    // 截 first frame 前先隐藏进度 UI
+    try {
+      await chrome.scripting.executeScript({
+        target: { tabId: tab.id, allFrames: false },
+        func: setProgressUIVisible,
+        args: [false]
+      });
+    } catch (_) {}
+    await sleep(30);
     firstFrameDataUrl = await new Promise((resolve, reject) => {
       chrome.tabs.captureVisibleTab(tab.windowId, { format: "png" }, (du) => {
         const e = chrome.runtime.lastError;
@@ -80,6 +102,14 @@ async function capture(tab) {
         resolve(du);
       });
     });
+    // 截完恢复
+    try {
+      await chrome.scripting.executeScript({
+        target: { tabId: tab.id, allFrames: false },
+        func: setProgressUIVisible,
+        args: [true]
+      });
+    } catch (_) {}
     const detected = await execInPage(tab.id, detectStickyAndFixedRects);
     if (Array.isArray(detected)) stickyOverlays = detected;
     console.log("[fullpage-shot] first frame captured, sticky overlays:", stickyOverlays.length);
@@ -112,7 +142,7 @@ async function capture(tab) {
     heightPx = result.height;
     truncated = result.truncated;
   } finally {
-    // 5. 截图完成或失败都要还原页面样式
+    // 5. 截图完成或失败都要还原页面样式 + 移除进度 UI
     if (neutralized) {
       try {
         await chrome.scripting.executeScript({
@@ -121,6 +151,12 @@ async function capture(tab) {
         });
       } catch (_) {}
     }
+    try {
+      await chrome.scripting.executeScript({
+        target: { tabId: tab.id, allFrames: false },
+        func: removeProgressUI
+      });
+    } catch (_) {}
   }
 
   const meta = {
@@ -147,6 +183,15 @@ async function capture(tab) {
   meta.saveError = saveError;
 
   await chrome.storage.local.set({ lastShot: { dataUrl, meta } });
+
+  // 进度推到 100% — viewer 即将打开
+  try {
+    await chrome.scripting.executeScript({
+      target: { tabId: tab.id, allFrames: false },
+      func: updateProgressUI,
+      args: [{ text: "Done!", percent: 100 }]
+    });
+  } catch (_) {}
 
   playShutter().catch((e) => console.warn("[fullpage-shot] 播放音效失败:", e));
 
@@ -246,6 +291,79 @@ async function saveToDownloads(dataUrl, sourceUrl) {
   });
 
   return filePath;
+}
+
+// 注入到目标 tab：装一个浮动进度 UI（顶部细线 + 中央卡片）。
+// 让用户看到"扩展正在截图，页面滚动是预期的"，不是页面 bug。
+function installProgressUI() {
+  const KEY = "__fullpageShotProgressUI__";
+  if (window[KEY]) return;
+  // 整个 UI 容器（统一管理，方便 hide/remove）
+  const root = document.createElement("div");
+  root.id = "__fullpage_shot_progress_root__";
+  root.setAttribute("data-fullpage-shot", "ui"); // 给 neutralize 跳过用
+  root.style.cssText = [
+    "all: initial",
+    "position: fixed",
+    "left: 0", "top: 0", "right: 0",
+    "z-index: 2147483647",
+    "pointer-events: none",
+    "font-family: -apple-system, BlinkMacSystemFont, sans-serif"
+  ].join(";");
+  // 顶部细线进度条
+  const barWrap = document.createElement("div");
+  barWrap.style.cssText = "height: 3px; background: rgba(0,0,0,0.15); width: 100%;";
+  const bar = document.createElement("div");
+  bar.id = "__fullpage_shot_progress_bar__";
+  bar.style.cssText = "height: 100%; width: 0%; background: linear-gradient(90deg, #2da44e, #58a6ff); transition: width 200ms ease;";
+  barWrap.appendChild(bar);
+  // 中央提示卡片
+  const card = document.createElement("div");
+  card.id = "__fullpage_shot_progress_card__";
+  card.style.cssText = [
+    "position: fixed",
+    "left: 50%", "top: 24px",
+    "transform: translateX(-50%)",
+    "background: rgba(15, 17, 22, 0.95)",
+    "color: #e6edf3",
+    "padding: 10px 18px",
+    "border-radius: 10px",
+    "border: 1px solid rgba(255,255,255,0.1)",
+    "box-shadow: 0 8px 32px rgba(0,0,0,0.4)",
+    "font-size: 14px",
+    "font-weight: 600",
+    "letter-spacing: 0.2px",
+    "white-space: nowrap"
+  ].join(";");
+  card.innerHTML = '<span style="margin-right:6px">📸</span><span id="__fullpage_shot_progress_text__">Capturing full page...</span>';
+  root.appendChild(barWrap);
+  root.appendChild(card);
+  document.documentElement.appendChild(root);
+  window[KEY] = { root };
+}
+
+function updateProgressUI(args) {
+  const KEY = "__fullpageShotProgressUI__";
+  if (!window[KEY]) return;
+  const text = document.getElementById("__fullpage_shot_progress_text__");
+  const bar = document.getElementById("__fullpage_shot_progress_bar__");
+  if (text && args && args.text) text.textContent = args.text;
+  if (bar && args && typeof args.percent === "number") {
+    bar.style.width = Math.max(0, Math.min(100, args.percent)) + "%";
+  }
+}
+
+function setProgressUIVisible(visible) {
+  const KEY = "__fullpageShotProgressUI__";
+  if (!window[KEY]) return;
+  window[KEY].root.style.visibility = visible ? "visible" : "hidden";
+}
+
+function removeProgressUI() {
+  const KEY = "__fullpageShotProgressUI__";
+  if (!window[KEY]) return;
+  try { window[KEY].root.remove(); } catch (_) {}
+  delete window[KEY];
 }
 
 // 注入到目标 tab：检测所有"视觉固定"的元素（不只是 CSS fixed/sticky）。
@@ -357,9 +475,12 @@ function neutralizeStickyAndFixed() {
   (document.head || document.documentElement).appendChild(styleEl);
 
   // 2. 遍历所有元素，找 fixed/sticky —— 彻底 display:none
+  // ⚠️ 跳过 data-fullpage-shot 标记的元素（我们自己的进度 UI 等）
   const all = document.querySelectorAll("*");
   let hiddenCount = 0;
   for (const el of all) {
+    if (el.getAttribute && el.getAttribute("data-fullpage-shot")) continue;
+    if (el.closest && el.closest('[data-fullpage-shot="ui"]')) continue;
     let cs;
     try { cs = getComputedStyle(el); } catch (_) { continue; }
     const pos = cs.position;
@@ -627,8 +748,31 @@ async function scrollStitch(tab, opts) {
     );
     const actualYNum = (scrollResult && typeof scrollResult.actualY === "number") ? scrollResult.actualY : scrollY;
 
+    // 更新进度 UI（基于 scroll progress / 估算总段数）
+    const estimatedTotal = Math.max(1, Math.ceil(h / vh));
+    const currentSegment = safety;
+    const percent = Math.min(95, 10 + Math.round((actualYNum / h) * 85));
+    try {
+      await chrome.scripting.executeScript({
+        target: { tabId, allFrames: false },
+        func: updateProgressUI,
+        args: [{ text: `Capturing... ${currentSegment} / ~${estimatedTotal}`, percent }]
+      });
+    } catch (_) {}
+
     // 600ms：给虚拟列表渲染时间 + captureVisibleTab 配额限制（Chrome 每秒最多 2 次）
     await sleep(600);
+
+    // 截图前临时隐藏进度 UI，避免它出现在截图里
+    try {
+      await chrome.scripting.executeScript({
+        target: { tabId, allFrames: false },
+        func: setProgressUIVisible,
+        args: [false]
+      });
+    } catch (_) {}
+    // 短等让浏览器实际重绘
+    await sleep(30);
 
     const visDataUrl = await new Promise((resolve, reject) => {
       chrome.tabs.captureVisibleTab(tab.windowId, { format: "png" }, (du) => {
@@ -638,6 +782,15 @@ async function scrollStitch(tab, opts) {
         resolve(du);
       });
     });
+
+    // 截完恢复 UI
+    try {
+      await chrome.scripting.executeScript({
+        target: { tabId, allFrames: false },
+        func: setProgressUIVisible,
+        args: [true]
+      });
+    } catch (_) {}
     // 每段记下当时的 rect（inner mode 用），不再依赖初始 info.rectLeft/rectTop
     slices.push({
       y: actualYNum,
