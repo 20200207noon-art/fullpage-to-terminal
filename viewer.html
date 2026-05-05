@@ -60,10 +60,11 @@
         color: #fff;
       }
       .banner-saved {
-        margin-top: 14px;
-        font-size: 13px;
-        color: #a8c8b6;
+        margin: 12px 0 8px;
+        font-size: 14px;
+        color: #c8e8d3;
         font-family: ui-monospace, "SF Mono", Menlo, monospace;
+        font-weight: 500;
         word-break: break-all;
         padding: 0 16px;
       }
@@ -181,13 +182,13 @@
       <span class="banner-hotkey">⌨ <kbd>⌥</kbd>+<kbd>A</kbd></span>
       <button class="banner-saveas" id="downloadBtn" type="button" data-i18n="btnSaveAs">⬇ Save as</button>
       <h1 class="banner-headline" id="bannerHeadline">
-        <span class="check">✓</span> <span id="bannerTitle">Saved</span>
+        <span class="check">✓</span> <span id="bannerTitle">Image copied</span>
       </h1>
-      <p class="banner-sub" id="bannerSub">
-        Press <kbd>⌘</kbd><kbd>V</kbd> anywhere to paste — shows as <span class="img-token">[Image&nbsp;#N]</span> in Claude Code, as a file in Finder / Notion / Slack
-      </p>
       <p class="banner-saved" id="bannerSaved" style="display:none;">
         <span class="pin">📁</span>Saved to <span id="bannerSavedPath"></span>
+      </p>
+      <p class="banner-sub" id="bannerSub">
+        Press <kbd>⌘</kbd><kbd>V</kbd> anywhere to paste — shows as <span class="img-token">[Image&nbsp;#N]</span> in Claude Code, or as a file in Finder / Notion / Slack
       </p>
     </div>
 

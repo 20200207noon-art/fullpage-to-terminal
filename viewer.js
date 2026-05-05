@@ -85,8 +85,8 @@ function setBannerError(title, sub) {
     if (lastMeta.clipboardMode === "file-ref") {
       copied = true;
       setBannerSuccess(
-        "Saved",
-        `Press <kbd>⌘</kbd><kbd>V</kbd> anywhere to paste — shows as <span class="img-token">[Image&nbsp;#N]</span> in Claude Code, as a file in Finder / Notion / Slack`
+        "Image copied",
+        `Press <kbd>⌘</kbd><kbd>V</kbd> anywhere to paste — shows as <span class="img-token">[Image&nbsp;#N]</span> in Claude Code, or as a file in Finder / Notion / Slack`
       );
       return;
     }
@@ -95,8 +95,8 @@ function setBannerError(title, sub) {
     pathText = `@${lastMeta.savedPath}`;
     fallbackAction.style.display = "block";
     setBannerFallback(
-      "Saved · click below to copy path",
-      `Then press <kbd>⌘</kbd><kbd>V</kbd> in <b>Claude Code</b> to paste`
+      "Almost ready",
+      `Click the button below, then press <kbd>⌘</kbd><kbd>V</kbd> in <b>Claude Code</b>`
     );
     bindFallbackCopy();
     tryAutoCopy();
