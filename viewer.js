@@ -86,7 +86,7 @@ function setBannerError(title, sub) {
       copied = true;
       setBannerSuccess(
         "Image copied",
-        `Press <kbd>⌘</kbd><kbd>V</kbd> anywhere to paste — shows as <span class="img-token">[Image&nbsp;#N]</span> in Claude Code, or as a file in Finder / Notion / Slack`
+        `Press <kbd>⌘</kbd><kbd>V</kbd> anywhere to paste — shows as <span class="img-token">[Image&nbsp;#N]</span> in Claude Code`
       );
       return;
     }
