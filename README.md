@@ -1,6 +1,12 @@
-# Fullpage Shot
+# Fullpage to Terminal
 
 Capture a full-page screenshot in Chrome → drop it into Claude Code (or any terminal-based AI CLI) as an `[Image #N]` attachment.
+
+> **⚠️ Status: shelved (not on Chrome Web Store).**
+>
+> Claude Code's terminal already natively supports `⌘V` (or `Ctrl+V`) to paste image bytes from the clipboard — they show up as `[Image #N]` automatically. So for **single-screen captures**, just use macOS `⌘⇧⌃4` (or any normal screenshot tool that puts the image on the clipboard) and paste — no extension needed.
+>
+> This extension's only differentiator is **full-page capture** (whole scrollable page, not just the visible viewport). If you specifically need that piped into Claude Code, you can install it manually (Load unpacked from `chrome://extensions`). Otherwise this repo is just kept as a reference / portfolio piece.
 
 ---
 
