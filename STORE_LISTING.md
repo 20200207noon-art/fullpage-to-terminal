@@ -23,6 +23,16 @@ Capture a full webpage screenshot and paste it straight into Claude Code (or any
 ## 3. Detailed description (详细描述)
 
 ```
+The fastest way to send a full webpage screenshot to Claude Code (or any terminal-based AI CLI). Press the hotkey, switch to your terminal, paste — done. The whole scrollable page shows up as [Image #N]. Just 2 keystrokes total.
+
+Compared to alternatives:
+
+• GoFullPage and similar full-page screenshot extensions: capture, then download a PNG — you still have to open Finder, find the file, ⌘C it, switch app, ⌘V. That's 5 steps.
+• macOS Cmd+Shift+Ctrl+4: 2 steps, but it only captures the visible viewport — anything below the fold is missed.
+• Fullpage to Terminal: 2 steps, AND captures the entire scrollable page.
+
+The differentiator is the combination of "full page" + "auto-on-clipboard as a file reference" — no manual file juggling.
+
 Fullpage to Terminal lets you capture a complete screenshot of any webpage — not just the visible part — and paste it directly into Claude Code (or any terminal-based AI CLI) as an [Image #N] attachment, with zero manual file handling.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━
