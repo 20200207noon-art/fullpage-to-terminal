@@ -925,22 +925,39 @@ async function scrollStitch(tab, opts) {
     }
   }
 
-  // ── 贴 sticky overlays（用 realDpr，不是 dpr）─────────
+  // ── 贴 sticky overlays（顶部固定贴顶部，底部固定贴最底部）─────────
+  // 之前所有 overlay 都贴在 viewport 原位置，导致底部输入框出现在长截图中段（错）。
+  // 现在按 viewport 中线判断：上半 = 顶部固定（贴 canvas 顶部）；下半 = 底部固定（贴 canvas 最底部）
   if (firstFrameDataUrl && stickyOverlays.length > 0) {
     try {
       const ffBlob = await (await fetch(firstFrameDataUrl)).blob();
       const ffBmp = await createImageBitmap(ffBlob);
+      const VPH = info.windowVH || info.viewportH;  // viewport 物理高度（CSS px）
+      let topCount = 0, bottomCount = 0;
       for (const ov of stickyOverlays) {
         const sx = Math.round(ov.left * realDpr);
         const sy = Math.round(ov.top * realDpr);
         const sw = Math.round(ov.width * realDpr);
         const sh = Math.round(ov.height * realDpr);
         const dx = Math.round(ov.left * realDpr);
-        const dy = Math.round(ov.top * realDpr);
+        // 元素中心点在 viewport 上半还是下半？
+        const ovCenter = ov.top + ov.height / 2;
+        const isBottom = ovCenter > VPH / 2;
+        let dy;
+        if (isBottom) {
+          // 底部固定：距离 viewport 底部多远 = bottomGap，贴到 canvas 距底部 bottomGap 处
+          const bottomGap = VPH - (ov.top + ov.height);
+          dy = canvasH - sh - Math.round(bottomGap * realDpr);
+          bottomCount++;
+        } else {
+          // 顶部固定：贴在 canvas 顶部 ov.top 处
+          dy = Math.round(ov.top * realDpr);
+          topCount++;
+        }
         ctx.drawImage(ffBmp, sx, sy, sw, sh, dx, dy, sw, sh);
       }
       ffBmp.close();
-      fpsLog("pasted", stickyOverlays.length, "sticky overlays in", info.mode, "mode at realDpr=" + realDpr);
+      fpsLog(`pasted ${stickyOverlays.length} sticky overlays (${topCount} top, ${bottomCount} bottom) in ${info.mode} mode at realDpr=${realDpr}`);
     } catch (e) {
       console.warn("[fullpage-shot] sticky overlay paste failed:", e.message);
     }
