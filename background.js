@@ -397,107 +397,34 @@ function removeProgressUI() {
   delete window[KEY];
 }
 
-// 注入到目标 tab：检测所有"视觉固定"的元素（不只是 CSS fixed/sticky）。
-// 方法：滚动一段距离，比较前后 boundingRect.top —— 没移动的元素就是固定的。
-// 这能捕获 absolute/relative 但布局上"在 main header 顶部"的元素（Claude.ai 的 Share 按钮就是这种）。
+// 注入到目标 tab：检测所有 CSS position: fixed/sticky 元素，返回它们的视口 rect。
+// 简化版：纯 CSS 检测，不做 scroll-then-measure（那会触发 React re-render 破坏页面）。
+// 漏掉的"视觉固定但 CSS 不是 fixed"的元素（如 Share 按钮）暂时接受重复出现，
+// 优先级 < 截整页的能力。
 function detectStickyAndFixedRects() {
   const VW = window.innerWidth;
   const VH = window.innerHeight;
-
-  // 1. 检测主滚动容器（和 scrollStitch 用同样算法）
-  const MIN_HOST_WIDTH = Math.max(400, VW * 0.5);
-  let bestHost = null;
-  let bestArea = 0;
+  const rects = [];
   for (const el of document.querySelectorAll("*")) {
     let cs;
     try { cs = getComputedStyle(el); } catch (_) { continue; }
-    const oy = cs.overflowY;
-    if (oy !== "auto" && oy !== "scroll") continue;
-    if (cs.display === "none" || cs.visibility === "hidden") continue;
-    const sh = el.scrollHeight, ch = el.clientHeight, cw = el.clientWidth;
-    if (sh - ch < 200 || cw < MIN_HOST_WIDTH) continue;
-    const tag = el.tagName.toLowerCase();
-    const role = el.getAttribute("role");
-    if (tag === "aside" || tag === "nav") continue;
-    if (role === "navigation" || role === "complementary") continue;
-    const area = (sh - ch) * ch;
-    if (area > bestArea) { bestArea = area; bestHost = el; }
-  }
-  const winScrollable = (document.documentElement.scrollHeight - VH) | 0;
-  const useInner = bestHost && (bestHost.scrollHeight - bestHost.clientHeight) > Math.max(winScrollable * 2, 800);
-
-  // 2. 收集"可能的装饰元素"候选：可见、有面积、在视口内
-  // 关键：**排除大尺寸 wrapper**（宽超 viewport 60% 且高超 viewport 60%）
-  // 否则页面主 wrapper 容器（满屏 div）会被误判为"视觉固定"——它本身不动，
-  // 动的是它内部的 scroll container。hide 它 = 整个页面崩了。
-  const MAX_DECO_W = VW * 0.6;
-  const MAX_DECO_H = VH * 0.6;
-  const candidates = [];
-  for (const el of document.querySelectorAll("*")) {
-    let cs;
-    try { cs = getComputedStyle(el); } catch (_) { continue; }
+    if (cs.position !== "fixed" && cs.position !== "sticky") continue;
     if (cs.display === "none" || cs.visibility === "hidden") continue;
     const r = el.getBoundingClientRect();
-    if (r.width < 30 || r.height < 20) continue;
+    if (r.width < 30 || r.height < 30) continue;
     if (r.right < 0 || r.bottom < 0 || r.left > VW || r.top > VH) continue;
-    // 跳过大尺寸 wrapper（不是装饰元素，hide 会破坏布局）
-    if (r.width > MAX_DECO_W && r.height > MAX_DECO_H) continue;
-    candidates.push({ el, r0: { l: r.left, t: r.top, w: r.width, h: r.height } });
+    rects.push({
+      left: Math.max(0, Math.round(r.left)),
+      top: Math.max(0, Math.round(r.top)),
+      width: Math.min(VW, Math.round(r.width)),
+      height: Math.min(VH, Math.round(r.height)),
+      area: Math.round(r.width * r.height)
+    });
   }
-
-  // 3. 滚一段
-  const SCROLL_TEST = 200;
-  let restoreScroll = 0;
-  if (useInner) {
-    restoreScroll = bestHost.scrollTop || 0;
-    bestHost.scrollTop = restoreScroll + SCROLL_TEST;
-  } else {
-    restoreScroll = window.scrollY;
-    window.scrollBy(0, SCROLL_TEST);
-  }
-
-  // 4. 重测 + 找"位置没变"的元素 = 视觉固定
-  // 关键：detect 阶段**当场直接 display:none**，不依赖 attribute 跨阶段（React re-render 会丢 attribute）
-  // 把元素引用 + 旧 style 存到 window.__fpsStuckHidden，restore 阶段从这里还原
-  if (!window.__fpsStuckHidden) window.__fpsStuckHidden = [];
-  const stuck = [];
-  for (const c of candidates) {
-    const r1 = c.el.getBoundingClientRect();
-    const dt = Math.abs(r1.top - c.r0.t);
-    const dl = Math.abs(r1.left - c.r0.l);
-    // top/left 移动 < 5px = 固定
-    if (dt < 5 && dl < 5) {
-      // 立即 hide，并记下原 style 以便后面恢复
-      window.__fpsStuckHidden.push({
-        el: c.el,
-        prevDisplay: c.el.style.display
-      });
-      try { c.el.style.setProperty("display", "none", "important"); } catch (_) {}
-      stuck.push({
-        left: Math.max(0, Math.round(c.r0.l)),
-        top: Math.max(0, Math.round(c.r0.t)),
-        width: Math.min(VW, Math.round(c.r0.w)),
-        height: Math.min(VH, Math.round(c.r0.h)),
-        area: Math.round(c.r0.w * c.r0.h)
-      });
-    }
-  }
-  const _detectLog = `hidden ${stuck.length} visually-stuck elements at detect time`;
-  console.log("[fullpage-shot]", _detectLog);
-  if (!window.__fpsInjectLogs) window.__fpsInjectLogs = [];
-  window.__fpsInjectLogs.push(_detectLog);
-
-  // 5. 滚回去
-  if (useInner) {
-    bestHost.scrollTop = restoreScroll;
-  } else {
-    window.scrollTo(0, restoreScroll);
-  }
-
-  // 6. 去重：包含关系 → 只留外层（避免 sidebar 内的小 div 重复贴）
-  stuck.sort((a, b) => b.area - a.area);
+  // 去重：包含关系 → 只留外层
+  rects.sort((a, b) => b.area - a.area);
   const dedup = [];
-  for (const r of stuck) {
+  for (const r of rects) {
     const containedByExisting = dedup.some(d =>
       r.left >= d.left - 2 && r.top >= d.top - 2 &&
       r.left + r.width <= d.left + d.width + 2 &&
@@ -505,10 +432,10 @@ function detectStickyAndFixedRects() {
     );
     if (!containedByExisting) dedup.push(r);
   }
-  const _stuckLog = `stuck elements: ${candidates.length} candidates, ${stuck.length} stuck, ${dedup.length} after dedup`;
-  console.log("[fullpage-shot]", _stuckLog);
+  const _log = `sticky/fixed rects: ${rects.length} found, ${dedup.length} after dedup (CSS-position based)`;
+  console.log("[fullpage-shot]", _log);
   if (!window.__fpsInjectLogs) window.__fpsInjectLogs = [];
-  window.__fpsInjectLogs.push(_stuckLog);
+  window.__fpsInjectLogs.push(_log);
   return dedup;
 }
 
@@ -588,17 +515,6 @@ function restoreStickyAndFixed() {
   }
   if (document.body) {
     document.body.style.overflow = state.bodyPrevOverflow || "";
-  }
-  // 还原 detect 阶段直接 hide 的 visually-stuck 元素
-  if (window.__fpsStuckHidden) {
-    for (const r of window.__fpsStuckHidden) {
-      if (!r.el) continue;
-      try {
-        if (r.prevDisplay) r.el.style.display = r.prevDisplay;
-        else r.el.style.removeProperty("display");
-      } catch (_) {}
-    }
-    delete window.__fpsStuckHidden;
   }
   delete window[KEY];
 }
