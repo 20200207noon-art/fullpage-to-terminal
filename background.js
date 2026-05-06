@@ -967,11 +967,13 @@ async function scrollStitch(tab, opts) {
     }
   }
 
-  // ── Band-row diff: 只在顶部 + 底部条带做 row-hash，中间 main 内容不管 ──
-  // 用户的"顶部不动 / 底部不动"逻辑精准实现
-  // 避免 cell-diff 在深色背景误判（中间区域不参与 diff）
-  // 避免 row-hash 全宽误判（main 内容污染整行 hash 不再是问题，因为中间不算）
-  if (decodedSlices.length >= 2) {
+  // ── 注：post-capture 像素 diff 算法已多次尝试都失败 ──
+  // - row-hash 全宽：main 内容污染 hash，检测不到固定行
+  // - cell-diff：深色背景中央像素相同→误判→覆盖错误
+  // - band-diff：整行覆盖把 main 内容也覆盖→ main 区域错位
+  // 接受现状：CSS-position fixed/sticky 元素正常处理；CSS 不是 fixed 但视觉
+  // 固定的元素（如 Claude.ai share 按钮）会重复出现——SPA 截图行业难题
+  if (false && decodedSlices.length >= 2) {
     try {
       // 取所有段的 ImageData
       const sliceImageData = [];
