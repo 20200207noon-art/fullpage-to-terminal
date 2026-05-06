@@ -419,6 +419,9 @@ function detectStickyAndFixedRects() {
   }
 
   // 4. 重测 + 找"位置没变"的元素 = 视觉固定
+  // 关键：给每个检测到的 stuck 元素打 data-fullpage-shot-stuck=1，
+  // neutralizeStickyAndFixed 会读这个属性把它们一并 display:none
+  // （否则 absolute/relative 但视觉固定的元素 neutralize 漏掉，会重复出现）
   const stuck = [];
   for (const c of candidates) {
     const r1 = c.el.getBoundingClientRect();
@@ -426,6 +429,7 @@ function detectStickyAndFixedRects() {
     const dl = Math.abs(r1.left - c.r0.l);
     // top/left 移动 < 5px = 固定
     if (dt < 5 && dl < 5) {
+      try { c.el.setAttribute("data-fullpage-shot-stuck", "1"); } catch (_) {}
       stuck.push({
         left: Math.max(0, Math.round(c.r0.l)),
         top: Math.max(0, Math.round(c.r0.t)),
@@ -474,17 +478,18 @@ function neutralizeStickyAndFixed() {
     "transition-duration:0s !important;transition-delay:0s !important;}";
   (document.head || document.documentElement).appendChild(styleEl);
 
-  // 2. 遍历所有元素，找 fixed/sticky —— 彻底 display:none
-  // ⚠️ 跳过 data-fullpage-shot 标记的元素（我们自己的进度 UI 等）
+  // 2. 遍历所有元素，找 fixed/sticky **或** 之前 detect 标记为 stuck 的 —— 彻底 display:none
+  // ⚠️ 跳过 data-fullpage-shot=ui 标记的元素（我们自己的进度 UI 等）
   const all = document.querySelectorAll("*");
   let hiddenCount = 0;
   for (const el of all) {
-    if (el.getAttribute && el.getAttribute("data-fullpage-shot")) continue;
+    if (el.getAttribute && el.getAttribute("data-fullpage-shot") === "ui") continue;
     if (el.closest && el.closest('[data-fullpage-shot="ui"]')) continue;
     let cs;
     try { cs = getComputedStyle(el); } catch (_) { continue; }
     const pos = cs.position;
-    if (pos === "fixed" || pos === "sticky") {
+    const isStuckByDetect = el.hasAttribute && el.hasAttribute("data-fullpage-shot-stuck");
+    if (pos === "fixed" || pos === "sticky" || isStuckByDetect) {
       restored.push({
         el,
         prevDisplay: el.style.display,
@@ -531,6 +536,12 @@ function restoreStickyAndFixed() {
   if (document.body) {
     document.body.style.overflow = state.bodyPrevOverflow || "";
   }
+  // 清掉 detect 阶段加的 stuck 标记，避免下次截图时残留
+  try {
+    document.querySelectorAll('[data-fullpage-shot-stuck]').forEach(el => {
+      el.removeAttribute('data-fullpage-shot-stuck');
+    });
+  } catch (_) {}
   delete window[KEY];
 }
 
