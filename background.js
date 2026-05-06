@@ -426,7 +426,12 @@ function detectStickyAndFixedRects() {
   const winScrollable = (document.documentElement.scrollHeight - VH) | 0;
   const useInner = bestHost && (bestHost.scrollHeight - bestHost.clientHeight) > Math.max(winScrollable * 2, 800);
 
-  // 2. 收集所有可见元素的初始位置
+  // 2. 收集"可能的装饰元素"候选：可见、有面积、在视口内
+  // 关键：**排除大尺寸 wrapper**（宽超 viewport 60% 且高超 viewport 60%）
+  // 否则页面主 wrapper 容器（满屏 div）会被误判为"视觉固定"——它本身不动，
+  // 动的是它内部的 scroll container。hide 它 = 整个页面崩了。
+  const MAX_DECO_W = VW * 0.6;
+  const MAX_DECO_H = VH * 0.6;
   const candidates = [];
   for (const el of document.querySelectorAll("*")) {
     let cs;
@@ -435,6 +440,8 @@ function detectStickyAndFixedRects() {
     const r = el.getBoundingClientRect();
     if (r.width < 30 || r.height < 20) continue;
     if (r.right < 0 || r.bottom < 0 || r.left > VW || r.top > VH) continue;
+    // 跳过大尺寸 wrapper（不是装饰元素，hide 会破坏布局）
+    if (r.width > MAX_DECO_W && r.height > MAX_DECO_H) continue;
     candidates.push({ el, r0: { l: r.left, t: r.top, w: r.width, h: r.height } });
   }
 
