@@ -655,13 +655,8 @@ async function scrollStitch(tab, opts) {
         candidates.push({ el, area, sh, ch, cw, tag });
       } catch (_) {}
     }
-    // 排序策略：**优先按宽度（cw）选**，宽度并列时再按 area
-    // 主内容区 99% 是页面里最宽的可滚容器，这比 area 排序更稳
-    // （否则若 sidebar 内有超长 list，area 反而比主区大，会误选）
-    candidates.sort((a, b) => {
-      if (b.cw !== a.cw) return b.cw - a.cw;  // 宽度大的优先
-      return b.area - a.area;                   // 同宽则面积大的优先
-    });
+    // 按 area 排序选最大（1.13.3 试过宽度优先反而误选 html/body 之类宽但实际滚不动的元素，回退）
+    candidates.sort((a, b) => b.area - a.area);
     const bestEl = candidates[0] ? candidates[0].el : null;
 
     // 调试日志
