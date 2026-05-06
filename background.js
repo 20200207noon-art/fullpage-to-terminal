@@ -892,98 +892,105 @@ async function scrollStitch(tab, opts) {
     }
   }
 
-  // ── Row-hash diff: 找出"在所有段都一模一样的水平行" = 视觉固定的内容 ──
-  // 这些行的位置每段都长一样，说明是 fixed/sticky/absolute 但视觉不动的元素
-  // 用 slice[0] 覆盖到这些行，让它们只出现在顶部一次
+  // ── Cell-based diff: 找出"在所有段都一样的 16x16 像素块" = 视觉固定区域 ──
+  // 比 row-hash 精细：一行里 share 按钮 + main 内容混在一起，整行 hash 会被 main 污染。
+  // 按 cell 比较，固定元素覆盖的 cells（如 share 按钮、sidebar）会被精确捕获。
   if (decodedSlices.length >= 2) {
     try {
-      // 1. 对每段截图取 ImageData，逐行算哈希
+      const CELL = 16;  // cell 大小（物理像素）
+      // 1. 对每段截图取 ImageData
       const sliceDataList = [];
       for (const s of decodedSlices) {
         const tmp = new OffscreenCanvas(s.bmp.width, s.bmp.height);
         const tctx = tmp.getContext("2d");
         tctx.imageSmoothingEnabled = false;
         tctx.drawImage(s.bmp, 0, 0);
-        const id = tctx.getImageData(0, 0, s.bmp.width, s.bmp.height);
-        // 逐行哈希（每 8 像素采样一次，加速）
-        const W = s.bmp.width, H = s.bmp.height;
-        const hashes = new Int32Array(H);
-        for (let y = 0; y < H; y++) {
-          let h = 2166136261 | 0;
-          const base = y * W * 4;
-          for (let x = 0; x < W; x += 8) {
-            const i = base + x * 4;
-            h = (h ^ id.data[i]) * 16777619 | 0;
-            h = (h ^ id.data[i + 1]) * 16777619 | 0;
-            h = (h ^ id.data[i + 2]) * 16777619 | 0;
+        sliceDataList.push({
+          slice: s,
+          imageData: tctx.getImageData(0, 0, s.bmp.width, s.bmp.height)
+        });
+      }
+      const W = sliceDataList[0].imageData.width;
+      const H = sliceDataList[0].imageData.height;
+      const cellsX = Math.floor(W / CELL);
+      const cellsY = Math.floor(H / CELL);
+
+      // 2. 对每段每个 cell 算简单 hash（取 cell 中央像素 RGB）
+      function cellHash(imageData, cx, cy) {
+        const px = cx * CELL + CELL / 2 | 0;
+        const py = cy * CELL + CELL / 2 | 0;
+        const i = (py * W + px) * 4;
+        return (imageData.data[i] << 16) | (imageData.data[i + 1] << 8) | imageData.data[i + 2];
+      }
+
+      // 3. 找"在所有段哈希都相同"的 cell = 视觉固定 cell
+      const stickyCell = new Uint8Array(cellsX * cellsY);
+      let stickyCellCount = 0;
+      for (let cy = 0; cy < cellsY; cy++) {
+        for (let cx = 0; cx < cellsX; cx++) {
+          const h0 = cellHash(sliceDataList[0].imageData, cx, cy);
+          let allSame = true;
+          for (let i = 1; i < sliceDataList.length; i++) {
+            if (cellHash(sliceDataList[i].imageData, cx, cy) !== h0) {
+              allSame = false; break;
+            }
           }
-          hashes[y] = h;
+          if (allSame) {
+            stickyCell[cy * cellsX + cx] = 1;
+            stickyCellCount++;
+          }
         }
-        sliceDataList.push({ slice: s, hashes, imageData: id });
       }
+      const totalCells = cellsX * cellsY;
+      fpsLog(`cell-diff: ${stickyCellCount} of ${totalCells} cells (${cellsX}x${cellsY}) are visually fixed`);
 
-      // 2. 找"在所有段哈希都相同"的行 = 固定行
-      const VH_phys = sliceDataList[0].hashes.length;
-      const stickyRows = new Uint8Array(VH_phys);
-      let stickyCount = 0;
-      for (let y = 0; y < VH_phys; y++) {
-        const h0 = sliceDataList[0].hashes[y];
-        let allSame = true;
-        for (let i = 1; i < sliceDataList.length; i++) {
-          if (sliceDataList[i].hashes[y] !== h0) { allSame = false; break; }
-        }
-        if (allSame) { stickyRows[y] = 1; stickyCount++; }
-      }
-      fpsLog(`row-hash diff: ${stickyCount} of ${VH_phys} viewport rows are visually fixed`);
-
-      // 3. 把 slice[0] 的固定行像素覆盖到 canvas 各段对应区域
-      //    思路：拼接 canvas 上每个 slice[i] 占 [s.y * realDpr, s.y * realDpr + dstH) 行；
-      //    对于固定行 ry，用 slice[0] 的 ry 行覆盖整张 canvas 同 ry 偏移内的对应像素
-      if (stickyCount > 0 && stickyCount < VH_phys * 0.95) {  // 太多/太少都不靠谱
+      // 4. 用 slice[0] 覆盖到 canvas 各段对应位置
+      if (stickyCellCount > 0 && stickyCellCount < totalCells * 0.95) {
         const slice0 = sliceDataList[0];
-        // 从 slice[0] 抠出固定行作为 source 图（先准备一个临时 canvas）
-        const fixRowsCanvas = new OffscreenCanvas(slice0.imageData.width, VH_phys);
-        const frctx = fixRowsCanvas.getContext("2d");
-        frctx.putImageData(slice0.imageData, 0, 0);
-        // 对 canvas 上每段 slice 的位置，把对应固定行覆盖一遍
+        const fixCanvas = new OffscreenCanvas(W, H);
+        const fctx = fixCanvas.getContext("2d");
+        fctx.putImageData(slice0.imageData, 0, 0);
+
+        // 对每段 slice[1..N]，把它对应位置的"固定 cells"用 slice[0] 覆盖
         for (let i = 1; i < sliceDataList.length; i++) {
           const s = sliceDataList[i].slice;
           const drawH = Math.min(vh, h - s.y);
           if (drawH <= 0) continue;
           const dstYBase = Math.round(s.y * realDpr);
-          // 找连续的固定行段（多次 drawImage 一行慢，先合并连续段）
-          let runStart = -1;
-          for (let ry = 0; ry <= VH_phys; ry++) {
-            const isFixed = ry < VH_phys && stickyRows[ry];
-            if (isFixed && runStart < 0) runStart = ry;
-            if ((!isFixed || ry === VH_phys) && runStart >= 0) {
-              const runLen = ry - runStart;
-              // 在 canvas 上 dstYBase + runStart 处覆盖
-              if (isInner) {
-                const rl = (typeof s.rectLeft === "number") ? s.rectLeft : info.rectLeft;
-                const rt = (typeof s.rectTop === "number") ? s.rectTop : info.rectTop;
-                const srcX = Math.round(rl * realDpr);
-                const srcY = Math.round(rt * realDpr) + runStart;
-                const dstX = Math.round(rl * realDpr);
-                ctx.drawImage(fixRowsCanvas,
-                  srcX, srcY, mainWidthPx, runLen,
-                  dstX, dstYBase + runStart, mainWidthPx, runLen);
-              } else {
-                ctx.drawImage(fixRowsCanvas,
-                  0, runStart, canvasW, runLen,
-                  0, dstYBase + runStart, canvasW, runLen);
+          // 把每行的连续固定 cell 段合并成 horizontal runs，drawImage 一次画一段
+          for (let cy = 0; cy < cellsY; cy++) {
+            let runStart = -1;
+            for (let cx = 0; cx <= cellsX; cx++) {
+              const isFixed = cx < cellsX && stickyCell[cy * cellsX + cx];
+              if (isFixed && runStart < 0) runStart = cx;
+              if ((!isFixed || cx === cellsX) && runStart >= 0) {
+                const runCells = cx - runStart;
+                const sx = runStart * CELL;
+                const sy = cy * CELL;
+                const sw = runCells * CELL;
+                const sh = CELL;
+                // 在 canvas 上 (sx, dstYBase + sy) 位置覆盖
+                if (isInner) {
+                  const rl = (typeof s.rectLeft === "number") ? s.rectLeft : info.rectLeft;
+                  const srcX = Math.round(rl * realDpr) + sx;
+                  const srcY = Math.round((typeof s.rectTop === "number" ? s.rectTop : info.rectTop) * realDpr) + sy;
+                  const dstX = Math.round(rl * realDpr) + sx;
+                  ctx.drawImage(fixCanvas, srcX, srcY, sw, sh, dstX, dstYBase + sy, sw, sh);
+                } else {
+                  ctx.drawImage(fixCanvas, sx, sy, sw, sh, sx, dstYBase + sy, sw, sh);
+                }
+                runStart = -1;
               }
-              runStart = -1;
             }
           }
         }
-        fpsLog(`row-hash diff applied: covered ${stickyCount} fixed rows across ${decodedSlices.length - 1} extra slices`);
+        fpsLog(`cell-diff applied: covered ${stickyCellCount} fixed cells across ${decodedSlices.length - 1} extra slices`);
       } else {
-        fpsLog(`row-hash diff: skipped (count=${stickyCount}, threshold check failed)`);
+        fpsLog(`cell-diff: skipped (count=${stickyCellCount} of ${totalCells}, threshold check failed)`);
       }
     } catch (e) {
-      console.warn("[fullpage-shot] row-hash diff failed:", e.message);
-      fpsLog("row-hash diff failed: " + e.message);
+      console.warn("[fullpage-shot] cell-diff failed:", e.message);
+      fpsLog("cell-diff failed: " + e.message);
     }
   }
 
