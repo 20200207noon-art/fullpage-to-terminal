@@ -895,6 +895,101 @@ async function scrollStitch(tab, opts) {
     }
   }
 
+  // ── Row-hash diff: 找出"在所有段都一模一样的水平行" = 视觉固定的内容 ──
+  // 这些行的位置每段都长一样，说明是 fixed/sticky/absolute 但视觉不动的元素
+  // 用 slice[0] 覆盖到这些行，让它们只出现在顶部一次
+  if (decodedSlices.length >= 2) {
+    try {
+      // 1. 对每段截图取 ImageData，逐行算哈希
+      const sliceDataList = [];
+      for (const s of decodedSlices) {
+        const tmp = new OffscreenCanvas(s.bmp.width, s.bmp.height);
+        const tctx = tmp.getContext("2d");
+        tctx.imageSmoothingEnabled = false;
+        tctx.drawImage(s.bmp, 0, 0);
+        const id = tctx.getImageData(0, 0, s.bmp.width, s.bmp.height);
+        // 逐行哈希（每 8 像素采样一次，加速）
+        const W = s.bmp.width, H = s.bmp.height;
+        const hashes = new Int32Array(H);
+        for (let y = 0; y < H; y++) {
+          let h = 2166136261 | 0;
+          const base = y * W * 4;
+          for (let x = 0; x < W; x += 8) {
+            const i = base + x * 4;
+            h = (h ^ id.data[i]) * 16777619 | 0;
+            h = (h ^ id.data[i + 1]) * 16777619 | 0;
+            h = (h ^ id.data[i + 2]) * 16777619 | 0;
+          }
+          hashes[y] = h;
+        }
+        sliceDataList.push({ slice: s, hashes, imageData: id });
+      }
+
+      // 2. 找"在所有段哈希都相同"的行 = 固定行
+      const VH_phys = sliceDataList[0].hashes.length;
+      const stickyRows = new Uint8Array(VH_phys);
+      let stickyCount = 0;
+      for (let y = 0; y < VH_phys; y++) {
+        const h0 = sliceDataList[0].hashes[y];
+        let allSame = true;
+        for (let i = 1; i < sliceDataList.length; i++) {
+          if (sliceDataList[i].hashes[y] !== h0) { allSame = false; break; }
+        }
+        if (allSame) { stickyRows[y] = 1; stickyCount++; }
+      }
+      fpsLog(`row-hash diff: ${stickyCount} of ${VH_phys} viewport rows are visually fixed`);
+
+      // 3. 把 slice[0] 的固定行像素覆盖到 canvas 各段对应区域
+      //    思路：拼接 canvas 上每个 slice[i] 占 [s.y * realDpr, s.y * realDpr + dstH) 行；
+      //    对于固定行 ry，用 slice[0] 的 ry 行覆盖整张 canvas 同 ry 偏移内的对应像素
+      if (stickyCount > 0 && stickyCount < VH_phys * 0.95) {  // 太多/太少都不靠谱
+        const slice0 = sliceDataList[0];
+        // 从 slice[0] 抠出固定行作为 source 图（先准备一个临时 canvas）
+        const fixRowsCanvas = new OffscreenCanvas(slice0.imageData.width, VH_phys);
+        const frctx = fixRowsCanvas.getContext("2d");
+        frctx.putImageData(slice0.imageData, 0, 0);
+        // 对 canvas 上每段 slice 的位置，把对应固定行覆盖一遍
+        for (let i = 1; i < sliceDataList.length; i++) {
+          const s = sliceDataList[i].slice;
+          const drawH = Math.min(vh, h - s.y);
+          if (drawH <= 0) continue;
+          const dstYBase = Math.round(s.y * realDpr);
+          // 找连续的固定行段（多次 drawImage 一行慢，先合并连续段）
+          let runStart = -1;
+          for (let ry = 0; ry <= VH_phys; ry++) {
+            const isFixed = ry < VH_phys && stickyRows[ry];
+            if (isFixed && runStart < 0) runStart = ry;
+            if ((!isFixed || ry === VH_phys) && runStart >= 0) {
+              const runLen = ry - runStart;
+              // 在 canvas 上 dstYBase + runStart 处覆盖
+              if (isInner) {
+                const rl = (typeof s.rectLeft === "number") ? s.rectLeft : info.rectLeft;
+                const rt = (typeof s.rectTop === "number") ? s.rectTop : info.rectTop;
+                const srcX = Math.round(rl * realDpr);
+                const srcY = Math.round(rt * realDpr) + runStart;
+                const dstX = Math.round(rl * realDpr);
+                ctx.drawImage(fixRowsCanvas,
+                  srcX, srcY, mainWidthPx, runLen,
+                  dstX, dstYBase + runStart, mainWidthPx, runLen);
+              } else {
+                ctx.drawImage(fixRowsCanvas,
+                  0, runStart, canvasW, runLen,
+                  0, dstYBase + runStart, canvasW, runLen);
+              }
+              runStart = -1;
+            }
+          }
+        }
+        fpsLog(`row-hash diff applied: covered ${stickyCount} fixed rows across ${decodedSlices.length - 1} extra slices`);
+      } else {
+        fpsLog(`row-hash diff: skipped (count=${stickyCount}, threshold check failed)`);
+      }
+    } catch (e) {
+      console.warn("[fullpage-shot] row-hash diff failed:", e.message);
+      fpsLog("row-hash diff failed: " + e.message);
+    }
+  }
+
   const outBlob = await canvas.convertToBlob({ type: "image/png" });
   const dataUrl = await blobToDataUrl(outBlob);
   return { dataUrl, width: w, height: info.height, truncated };
