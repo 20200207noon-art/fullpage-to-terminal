@@ -97,6 +97,7 @@ async function capture(tab) {
   //     拼接结束时把这些元素从 first frame 抠出来贴回拼接图，模拟"始终静止在那"的视觉
   let firstFrameDataUrl = null;
   let stickyOverlays = [];
+  let pageBgColor = null;
   try {
     // 截 first frame 前先隐藏进度 UI
     try {
@@ -126,6 +127,9 @@ async function capture(tab) {
     const detected = await execInPage(tab.id, detectStickyAndFixedRects);
     if (Array.isArray(detected)) stickyOverlays = detected;
     fpsLog("first frame captured, sticky overlays:", stickyOverlays.length);
+    // 拿页面真实背景色，避免深色页面最后留白边
+    pageBgColor = await execInPage(tab.id, getPageBackgroundColor);
+    if (pageBgColor) fpsLog("page bg color:", pageBgColor);
   } catch (e) {
     console.warn("[fullpage-shot] first frame / overlay detection failed:", e.message);
   }
@@ -149,7 +153,7 @@ async function capture(tab) {
   let truncated = false;
 
   try {
-    const result = await scrollStitch(tab, { firstFrameDataUrl, stickyOverlays });
+    const result = await scrollStitch(tab, { firstFrameDataUrl, stickyOverlays, pageBgColor });
     dataUrl = result.dataUrl;
     widthPx = result.width;
     heightPx = result.height;
@@ -614,6 +618,7 @@ async function scrollStitch(tab, opts) {
   const tabId = tab.id;
   const firstFrameDataUrl = opts && opts.firstFrameDataUrl;
   const stickyOverlays = (opts && opts.stickyOverlays) || [];
+  const pageBgColor = (opts && opts.pageBgColor) || "#ffffff";
   // 步骤 1：在页面上下文里找出"最大可滚动元素"和它的尺寸/DPR，
   // 同时把它存到 window.__fpsHost，后续每一帧 scroll 都用同一个引用。
   const info = await execInPage(tabId, () => {
@@ -876,7 +881,8 @@ async function scrollStitch(tab, opts) {
   if (!ctx) throw new Error("无法创建 OffscreenCanvas 2D context");
   // 关键：禁用插值 —— src 和 dst 同尺寸时不应有任何重采样
   ctx.imageSmoothingEnabled = false;
-  ctx.fillStyle = "#ffffff";
+  // 用页面真实背景色填充（深色页面避免白边）
+  ctx.fillStyle = pageBgColor;
   ctx.fillRect(0, 0, canvasW, canvasH);
 
   const mainWidthPx = Math.round(w * realDpr);
