@@ -957,13 +957,10 @@ async function scrollStitch(tab, opts) {
     }
   }
 
-  // ── 注：post-capture 像素 diff 算法已多次尝试都失败 ──
-  // - row-hash 全宽：main 内容污染 hash，检测不到固定行
-  // - cell-diff：深色背景中央像素相同→误判→覆盖错误
-  // - band-diff：整行覆盖把 main 内容也覆盖→ main 区域错位
-  // 接受现状：CSS-position fixed/sticky 元素正常处理；CSS 不是 fixed 但视觉
-  // 固定的元素（如 Claude.ai share 按钮）会重复出现——SPA 截图行业难题
-  if (false && decodedSlices.length >= 2) {
+  // ── 底部条带逐像素 diff：只针对 viewport 底部 22%，找出真正"在所有段都不动"的像素 ──
+  // 用 slice[0] 那些像素覆盖每段对应位置 + 最末贴一份到 canvas 最底
+  // 适用场景：Claude.ai 输入框（CSS 不是 fixed/sticky 但视觉固定）
+  if (decodedSlices.length >= 2) {
     try {
       // 取所有段的 ImageData
       const sliceImageData = [];
@@ -976,100 +973,75 @@ async function scrollStitch(tab, opts) {
       }
       const W = sliceImageData[0].width;
       const H = sliceImageData[0].height;
-      // 用户逻辑：除了底部 22%，其他都算"上部"（顶部 + 中间）
       const BOTTOM_BAND = Math.min(Math.round(H * 0.22), 200);
-      const TOP_BAND_END = H - BOTTOM_BAND;  // 上部 band 范围 [0, TOP_BAND_END)
+      const BOTTOM_START = H - BOTTOM_BAND;
 
-      // 计算指定 y 行的 hash
-      function rowHash(imageData, y) {
-        let h = 2166136261 | 0;
-        const base = y * W * 4;
-        for (let x = 0; x < W; x += 4) {
-          const i = base + x * 4;
-          h = (h ^ imageData.data[i]) * 16777619 | 0;
-          h = (h ^ imageData.data[i + 1]) * 16777619 | 0;
-          h = (h ^ imageData.data[i + 2]) * 16777619 | 0;
-        }
-        return h;
-      }
-
-      // 上部条带（含中间）：找"在所有段都相同"的行
-      const topFixed = new Uint8Array(TOP_BAND_END);
-      let topCount = 0;
-      for (let y = 0; y < TOP_BAND_END; y++) {
-        const h0 = rowHash(sliceImageData[0], y);
-        let allSame = true;
-        for (let i = 1; i < sliceImageData.length; i++) {
-          if (rowHash(sliceImageData[i], y) !== h0) { allSame = false; break; }
-        }
-        if (allSame) { topFixed[y] = 1; topCount++; }
-      }
-
-      // 底部条带：同理（在 [H-BOTTOM_BAND, H)）
-      const bottomFixed = new Uint8Array(BOTTOM_BAND);
-      let botCount = 0;
+      // 在底部条带逐**像素**找"所有段都相同"的像素（不是整行）—— Claude.ai 输入框检测
+      // 性能：1920×200 = 384K 像素 × N 段 ≈ 几 MB ops，几百毫秒
+      const bottomMask = new Uint8Array(W * BOTTOM_BAND);  // 1=固定像素
+      let fixedPxCount = 0;
+      const data0 = sliceImageData[0].data;
       for (let by = 0; by < BOTTOM_BAND; by++) {
-        const y = H - BOTTOM_BAND + by;
-        const h0 = rowHash(sliceImageData[0], y);
-        let allSame = true;
-        for (let i = 1; i < sliceImageData.length; i++) {
-          if (rowHash(sliceImageData[i], y) !== h0) { allSame = false; break; }
+        const y = BOTTOM_START + by;
+        for (let x = 0; x < W; x++) {
+          const i = (y * W + x) * 4;
+          const r0 = data0[i], g0 = data0[i + 1], b0 = data0[i + 2];
+          let allSame = true;
+          for (let k = 1; k < sliceImageData.length; k++) {
+            const dk = sliceImageData[k].data;
+            if (dk[i] !== r0 || dk[i + 1] !== g0 || dk[i + 2] !== b0) {
+              allSame = false; break;
+            }
+          }
+          if (allSame) {
+            bottomMask[by * W + x] = 1;
+            fixedPxCount++;
+          }
         }
-        if (allSame) { bottomFixed[by] = 1; botCount++; }
       }
+      const totalBottomPx = W * BOTTOM_BAND;
+      fpsLog(`bottom-px-diff: ${fixedPxCount}/${totalBottomPx} pixels are visually fixed (${(fixedPxCount/totalBottomPx*100).toFixed(1)}%)`);
 
-      fpsLog(`band-diff: top+mid ${topCount}/${TOP_BAND_END} fixed rows, bottom ${botCount}/${BOTTOM_BAND} fixed rows`);
+      // 应用：建一个 RGBA buffer，固定像素 = slice[0] 像素 + 透明背景（其余像素=透明）
+      // 然后把这个 buffer 贴到 canvas 各段的底部位置 + canvas 最底部一次
+      if (fixedPxCount > 0 && fixedPxCount < totalBottomPx * 0.95) {
+        // 建一个 W × BOTTOM_BAND 的 ImageData，只有 fixed 像素有数据
+        const overlayData = new Uint8ClampedArray(W * BOTTOM_BAND * 4);
+        for (let by = 0; by < BOTTOM_BAND; by++) {
+          const y = BOTTOM_START + by;
+          for (let x = 0; x < W; x++) {
+            if (bottomMask[by * W + x]) {
+              const srcI = (y * W + x) * 4;
+              const dstI = (by * W + x) * 4;
+              overlayData[dstI]     = data0[srcI];
+              overlayData[dstI + 1] = data0[srcI + 1];
+              overlayData[dstI + 2] = data0[srcI + 2];
+              overlayData[dstI + 3] = 255;
+            }
+          }
+        }
+        const overlayImg = new ImageData(overlayData, W, BOTTOM_BAND);
+        const overlayCanvas = new OffscreenCanvas(W, BOTTOM_BAND);
+        overlayCanvas.getContext("2d").putImageData(overlayImg, 0, 0);
 
-      // 应用顶部覆盖：每段（除 slice[0]）的顶部 fixed 行用 slice[0] 同行覆盖
-      // 应用底部覆盖：所有段除最后一段不动，把 slice[0] 的底部 fixed 行贴到 canvas 最底部
-      const slice0Canvas = new OffscreenCanvas(W, H);
-      const s0ctx = slice0Canvas.getContext("2d");
-      s0ctx.putImageData(sliceImageData[0], 0, 0);
-
-      // 上部：覆盖 slice[1..N] 各段上部 fixed 行（用 slice[0] 同行）
-      if (topCount > 0 && topCount < TOP_BAND_END * 0.95) {
+        // 贴到 canvas 各段底部位置（覆盖每段中间出现的输入框）
         for (let i = 1; i < decodedSlices.length; i++) {
           const s = decodedSlices[i];
           const drawH = Math.min(vh, h - s.y);
           if (drawH <= 0) continue;
-          const dstYBase = Math.round(s.y * realDpr);
-          let runStart = -1;
-          for (let y = 0; y <= TOP_BAND_END; y++) {
-            const isFixed = y < TOP_BAND_END && topFixed[y];
-            if (isFixed && runStart < 0) runStart = y;
-            if ((!isFixed || y === TOP_BAND_END) && runStart >= 0) {
-              const runLen = y - runStart;
-              ctx.drawImage(slice0Canvas, 0, runStart, W, runLen, 0, dstYBase + runStart, W, runLen);
-              runStart = -1;
-            }
+          const dstY = Math.round(s.y * realDpr) + BOTTOM_START;
+          if (dstY + BOTTOM_BAND <= canvasH) {
+            ctx.drawImage(overlayCanvas, 0, 0, W, BOTTOM_BAND, 0, dstY, W, BOTTOM_BAND);
           }
         }
-      }
+        // canvas 最底也确保贴一份（用户期望"输入框在长截图最底"）
+        const finalDstY = canvasH - BOTTOM_BAND;
+        ctx.drawImage(overlayCanvas, 0, 0, W, BOTTOM_BAND, 0, finalDstY, W, BOTTOM_BAND);
 
-      // 底部：用 slice[0] 底部 fixed 行覆盖到各段底部位置（每段都覆盖，自然最底也是它）
-      if (botCount > 0 && botCount < BOTTOM_BAND * 0.95) {
-        let runStart = -1;
-        for (let by = 0; by <= BOTTOM_BAND; by++) {
-          const isFixed = by < BOTTOM_BAND && bottomFixed[by];
-          if (isFixed && runStart < 0) runStart = by;
-          if ((!isFixed || by === BOTTOM_BAND) && runStart >= 0) {
-            const runLen = by - runStart;
-            const srcY = H - BOTTOM_BAND + runStart;
-            for (let i = 1; i < decodedSlices.length; i++) {
-              const s = decodedSlices[i];
-              const drawH = Math.min(vh, h - s.y);
-              if (drawH <= 0) continue;
-              const dstY = Math.round(s.y * realDpr) + (H - BOTTOM_BAND + runStart);
-              if (dstY + runLen <= canvasH) {
-                ctx.drawImage(slice0Canvas, 0, srcY, W, runLen, 0, dstY, W, runLen);
-              }
-            }
-            runStart = -1;
-          }
-        }
+        fpsLog(`bottom-px-diff applied: covered ${fixedPxCount} fixed pixels on ${decodedSlices.length - 1} slices + canvas bottom`);
+      } else {
+        fpsLog(`bottom-px-diff: skipped (count=${fixedPxCount}, threshold check failed)`);
       }
-
-      fpsLog(`band-diff applied: top+mid ${topCount} rows on ${decodedSlices.length - 1} slices, bottom ${botCount} rows`);
     } catch (e) {
       console.warn("[fullpage-shot] band-diff failed:", e.message);
       fpsLog("band-diff failed: " + e.message);
