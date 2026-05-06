@@ -108,14 +108,7 @@ async function capture(tab) {
       });
     } catch (_) {}
     await sleep(30);
-    firstFrameDataUrl = await new Promise((resolve, reject) => {
-      chrome.tabs.captureVisibleTab(tab.windowId, { format: "png" }, (du) => {
-        const e = chrome.runtime.lastError;
-        if (e) return reject(new Error(e.message));
-        if (!du) return reject(new Error("first frame empty"));
-        resolve(du);
-      });
-    });
+    firstFrameDataUrl = await captureWithDebugger(tab.id);
     // 截完恢复
     try {
       await chrome.scripting.executeScript({
@@ -817,14 +810,9 @@ async function scrollStitch(tab, opts) {
     // 短等让浏览器实际重绘
     await sleep(30);
 
-    const visDataUrl = await new Promise((resolve, reject) => {
-      chrome.tabs.captureVisibleTab(tab.windowId, { format: "png" }, (du) => {
-        const err = chrome.runtime.lastError;
-        if (err) return reject(new Error("captureVisibleTab: " + err.message));
-        if (!du) return reject(new Error("captureVisibleTab returned empty"));
-        resolve(du);
-      });
-    });
+    // 用 chrome.debugger Page.captureScreenshot 强制高清（2× Retina）
+    // 代价：顶部"正在调试此浏览器"横幅几秒，但能换来真正的物理像素分辨率
+    const visDataUrl = await captureWithDebugger(tab.id);
 
     // 截完恢复 UI
     try {
@@ -1097,6 +1085,45 @@ async function scrollStitch(tab, opts) {
 }
 
 // chrome.scripting.executeScript 包装：在页面上下文里跑函数，返回结果
+// 用 chrome.debugger 截图（高清版）：先 attach + 强制 deviceScaleFactor 提高分辨率
+// 代价：会触发顶部"正在调试此浏览器"横幅几秒
+async function captureWithDebugger(tabId) {
+  const target = { tabId };
+  let attached = false;
+  try {
+    await new Promise((resolve, reject) => {
+      chrome.debugger.attach(target, "1.3", () => {
+        const e = chrome.runtime.lastError;
+        if (e && !/already attached/i.test(e.message)) return reject(new Error(e.message));
+        resolve();
+      });
+    });
+    attached = true;
+    // captureBeyondViewport: false → 只截当前视口
+    // fromSurface: true → 直接从 GPU surface 拿，更快更清晰
+    const result = await new Promise((resolve, reject) => {
+      chrome.debugger.sendCommand(
+        target,
+        "Page.captureScreenshot",
+        { format: "png", captureBeyondViewport: false, fromSurface: true },
+        (r) => {
+          const e = chrome.runtime.lastError;
+          if (e) return reject(new Error("captureScreenshot: " + e.message));
+          if (!r || !r.data) return reject(new Error("captureScreenshot returned empty"));
+          resolve(r);
+        }
+      );
+    });
+    return "data:image/png;base64," + result.data;
+  } finally {
+    if (attached) {
+      try {
+        await new Promise((resolve) => chrome.debugger.detach(target, () => resolve()));
+      } catch (_) {}
+    }
+  }
+}
+
 async function execInPage(tabId, func, args) {
   try {
     const r = await chrome.scripting.executeScript({
