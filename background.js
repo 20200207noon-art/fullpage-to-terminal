@@ -852,13 +852,11 @@ async function scrollStitch(tab, opts) {
 
   const mainWidthPx = Math.round(w * realDpr);
 
+  // 主拼接 —— **不要在循环里 close bmp**，row-hash diff 之后统一 close
   for (const s of decodedSlices) {
     const bmp = s.bmp;
     const drawH = Math.min(vh, h - s.y);
-    if (drawH <= 0) {
-      bmp.close();
-      continue;
-    }
+    if (drawH <= 0) continue;
     const dstY = Math.round(s.y * realDpr);
     const dstH = Math.round(drawH * realDpr);
     if (isInner) {
@@ -871,7 +869,6 @@ async function scrollStitch(tab, opts) {
     } else {
       ctx.drawImage(bmp, 0, 0, canvasW, dstH, 0, dstY, canvasW, dstH);
     }
-    bmp.close();
   }
 
   // ── 贴 sticky overlays（用 realDpr，不是 dpr）─────────
@@ -988,6 +985,11 @@ async function scrollStitch(tab, opts) {
       console.warn("[fullpage-shot] row-hash diff failed:", e.message);
       fpsLog("row-hash diff failed: " + e.message);
     }
+  }
+
+  // 统一 close 所有 bmp（row-hash diff 之后）
+  for (const s of decodedSlices) {
+    try { s.bmp.close(); } catch (_) {}
   }
 
   const outBlob = await canvas.convertToBlob({ type: "image/png" });
