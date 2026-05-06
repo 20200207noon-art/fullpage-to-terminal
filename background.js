@@ -787,7 +787,9 @@ async function scrollStitch(tab, opts) {
     const actualYNum = (scrollResult && typeof scrollResult.actualY === "number") ? scrollResult.actualY : scrollY;
 
     // 更新进度 UI（基于 scroll progress / 估算总段数）
-    const estimatedTotal = Math.max(1, Math.ceil(h / vh));
+    // 实际段数考虑 OVERLAP=40 重叠：每段前进 (vh - 40) 而非整 vh，所以 +1 起始段
+    const stepPx = Math.max(80, vh - 40);
+    const estimatedTotal = Math.max(1, Math.ceil((h - vh) / stepPx) + 1);
     const currentSegment = safety;
     const percent = Math.min(95, 10 + Math.round((actualYNum / h) * 85));
     try {
@@ -1004,43 +1006,58 @@ async function scrollStitch(tab, opts) {
       const totalBottomPx = W * BOTTOM_BAND;
       fpsLog(`bottom-px-diff: ${fixedPxCount}/${totalBottomPx} pixels visually fixed (${(fixedPxCount/totalBottomPx*100).toFixed(1)}%, fuzzy ±${TOL})`);
 
-      // 应用：建一个 RGBA buffer，固定像素 = slice[0] 像素 + 透明背景（其余像素=透明）
-      // 然后把这个 buffer 贴到 canvas 各段的底部位置 + canvas 最底部一次
+      // 应用：
+      //   1. 中段（所有 slice 自然位置）的 fixed 像素 → 用 page bg color **清空**
+      //      （不能用 slice[0]，因为 slice[0] 那位置也是 input bar，覆盖等于没覆盖）
+      //   2. Canvas 最底部 → 用 slice[0] 的 fixed 像素**贴上**（最终 input bar）
       if (fixedPxCount > 0 && fixedPxCount < totalBottomPx * 0.95) {
-        // 建一个 W × BOTTOM_BAND 的 ImageData，只有 fixed 像素有数据
-        const overlayData = new Uint8ClampedArray(W * BOTTOM_BAND * 4);
+        // 解析 page bg color
+        let bgR = 30, bgG = 30, bgB = 30;
+        const m = pageBgColor.match(/(\d+)\s*,\s*(\d+)\s*,\s*(\d+)/);
+        if (m) { bgR = +m[1]; bgG = +m[2]; bgB = +m[3]; }
+
+        // overlay A: fixed 像素 = bg color（用于中段清空）
+        const clearData = new Uint8ClampedArray(W * BOTTOM_BAND * 4);
+        // overlay B: fixed 像素 = slice[0] 像素（用于 canvas 最底贴）
+        const finalData = new Uint8ClampedArray(W * BOTTOM_BAND * 4);
         for (let by = 0; by < BOTTOM_BAND; by++) {
           const y = BOTTOM_START + by;
           for (let x = 0; x < W; x++) {
-            if (bottomMask[by * W + x]) {
-              const srcI = (y * W + x) * 4;
-              const dstI = (by * W + x) * 4;
-              overlayData[dstI]     = data0[srcI];
-              overlayData[dstI + 1] = data0[srcI + 1];
-              overlayData[dstI + 2] = data0[srcI + 2];
-              overlayData[dstI + 3] = 255;
+            const maskI = by * W + x;
+            const dstI = maskI * 4;
+            const srcI = (y * W + x) * 4;
+            if (bottomMask[maskI]) {
+              clearData[dstI]     = bgR;
+              clearData[dstI + 1] = bgG;
+              clearData[dstI + 2] = bgB;
+              clearData[dstI + 3] = 255;
+              finalData[dstI]     = data0[srcI];
+              finalData[dstI + 1] = data0[srcI + 1];
+              finalData[dstI + 2] = data0[srcI + 2];
+              finalData[dstI + 3] = 255;
             }
           }
         }
-        const overlayImg = new ImageData(overlayData, W, BOTTOM_BAND);
-        const overlayCanvas = new OffscreenCanvas(W, BOTTOM_BAND);
-        overlayCanvas.getContext("2d").putImageData(overlayImg, 0, 0);
+        const clearCanvas = new OffscreenCanvas(W, BOTTOM_BAND);
+        clearCanvas.getContext("2d").putImageData(new ImageData(clearData, W, BOTTOM_BAND), 0, 0);
+        const finalCanvas = new OffscreenCanvas(W, BOTTOM_BAND);
+        finalCanvas.getContext("2d").putImageData(new ImageData(finalData, W, BOTTOM_BAND), 0, 0);
 
-        // 贴到 canvas 各段底部位置（覆盖每段中间出现的输入框）
-        for (let i = 1; i < decodedSlices.length; i++) {
+        // 步骤 1：所有段的底部 fixed 像素位置清空（含 slice[0] 自然位置）
+        for (let i = 0; i < decodedSlices.length; i++) {
           const s = decodedSlices[i];
           const drawH = Math.min(vh, h - s.y);
           if (drawH <= 0) continue;
           const dstY = Math.round(s.y * realDpr) + BOTTOM_START;
           if (dstY + BOTTOM_BAND <= canvasH) {
-            ctx.drawImage(overlayCanvas, 0, 0, W, BOTTOM_BAND, 0, dstY, W, BOTTOM_BAND);
+            ctx.drawImage(clearCanvas, 0, 0, W, BOTTOM_BAND, 0, dstY, W, BOTTOM_BAND);
           }
         }
-        // canvas 最底也确保贴一份（用户期望"输入框在长截图最底"）
+        // 步骤 2：canvas 最底贴 slice[0] 的 input bar
         const finalDstY = canvasH - BOTTOM_BAND;
-        ctx.drawImage(overlayCanvas, 0, 0, W, BOTTOM_BAND, 0, finalDstY, W, BOTTOM_BAND);
+        ctx.drawImage(finalCanvas, 0, 0, W, BOTTOM_BAND, 0, finalDstY, W, BOTTOM_BAND);
 
-        fpsLog(`bottom-px-diff applied: covered ${fixedPxCount} fixed pixels on ${decodedSlices.length - 1} slices + canvas bottom`);
+        fpsLog(`bottom-px-diff applied: cleared ${fixedPxCount} fixed pixels on ${decodedSlices.length} slices, pasted at canvas bottom`);
       } else {
         fpsLog(`bottom-px-diff: skipped (count=${fixedPxCount}, threshold check failed)`);
       }
