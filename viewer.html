@@ -132,27 +132,22 @@
       .banner.err .banner-headline { color: var(--err-fg); }
 
       .img-wrap {
-        padding: 20px;
-        text-align: center;
+        padding: 0;
+        text-align: left;
       }
       .img-wrap img {
         display: block;
-        margin: 0 auto;
         max-width: 100%;
         height: auto;
-        box-shadow: 0 4px 32px rgba(0,0,0,0.5);
         image-rendering: -webkit-optimize-contrast;
         image-rendering: crisp-edges;
-        cursor: zoom-in;
-        transition: max-width 200ms ease;
       }
       .img-wrap.actual-size img {
         max-width: none;
         width: auto;
-        cursor: zoom-out;
       }
       .img-wrap.actual-size {
-        overflow-x: auto;
+        overflow: auto;
       }
       .zoom-bar {
         text-align: center;
