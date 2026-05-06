@@ -419,9 +419,9 @@ function detectStickyAndFixedRects() {
   }
 
   // 4. 重测 + 找"位置没变"的元素 = 视觉固定
-  // 关键：给每个检测到的 stuck 元素打 data-fullpage-shot-stuck=1，
-  // neutralizeStickyAndFixed 会读这个属性把它们一并 display:none
-  // （否则 absolute/relative 但视觉固定的元素 neutralize 漏掉，会重复出现）
+  // 关键：detect 阶段**当场直接 display:none**，不依赖 attribute 跨阶段（React re-render 会丢 attribute）
+  // 把元素引用 + 旧 style 存到 window.__fpsStuckHidden，restore 阶段从这里还原
+  if (!window.__fpsStuckHidden) window.__fpsStuckHidden = [];
   const stuck = [];
   for (const c of candidates) {
     const r1 = c.el.getBoundingClientRect();
@@ -429,7 +429,12 @@ function detectStickyAndFixedRects() {
     const dl = Math.abs(r1.left - c.r0.l);
     // top/left 移动 < 5px = 固定
     if (dt < 5 && dl < 5) {
-      try { c.el.setAttribute("data-fullpage-shot-stuck", "1"); } catch (_) {}
+      // 立即 hide，并记下原 style 以便后面恢复
+      window.__fpsStuckHidden.push({
+        el: c.el,
+        prevDisplay: c.el.style.display
+      });
+      try { c.el.style.setProperty("display", "none", "important"); } catch (_) {}
       stuck.push({
         left: Math.max(0, Math.round(c.r0.l)),
         top: Math.max(0, Math.round(c.r0.t)),
@@ -439,6 +444,7 @@ function detectStickyAndFixedRects() {
       });
     }
   }
+  console.log(`[fullpage-shot] hidden ${stuck.length} visually-stuck elements at detect time`);
 
   // 5. 滚回去
   if (useInner) {
@@ -478,7 +484,8 @@ function neutralizeStickyAndFixed() {
     "transition-duration:0s !important;transition-delay:0s !important;}";
   (document.head || document.documentElement).appendChild(styleEl);
 
-  // 2. 遍历所有元素，找 fixed/sticky **或** 之前 detect 标记为 stuck 的 —— 彻底 display:none
+  // 2. 遍历所有元素，找 CSS fixed/sticky → display:none
+  // （detect 阶段已经直接 hide 了 visually-stuck 元素，这里只处理 detect 漏掉的 CSS 级 fixed/sticky）
   // ⚠️ 跳过 data-fullpage-shot=ui 标记的元素（我们自己的进度 UI 等）
   const all = document.querySelectorAll("*");
   let hiddenCount = 0;
@@ -488,8 +495,7 @@ function neutralizeStickyAndFixed() {
     let cs;
     try { cs = getComputedStyle(el); } catch (_) { continue; }
     const pos = cs.position;
-    const isStuckByDetect = el.hasAttribute && el.hasAttribute("data-fullpage-shot-stuck");
-    if (pos === "fixed" || pos === "sticky" || isStuckByDetect) {
+    if (pos === "fixed" || pos === "sticky") {
       restored.push({
         el,
         prevDisplay: el.style.display,
@@ -536,12 +542,17 @@ function restoreStickyAndFixed() {
   if (document.body) {
     document.body.style.overflow = state.bodyPrevOverflow || "";
   }
-  // 清掉 detect 阶段加的 stuck 标记，避免下次截图时残留
-  try {
-    document.querySelectorAll('[data-fullpage-shot-stuck]').forEach(el => {
-      el.removeAttribute('data-fullpage-shot-stuck');
-    });
-  } catch (_) {}
+  // 还原 detect 阶段直接 hide 的 visually-stuck 元素
+  if (window.__fpsStuckHidden) {
+    for (const r of window.__fpsStuckHidden) {
+      if (!r.el) continue;
+      try {
+        if (r.prevDisplay) r.el.style.display = r.prevDisplay;
+        else r.el.style.removeProperty("display");
+      } catch (_) {}
+    }
+    delete window.__fpsStuckHidden;
+  }
   delete window[KEY];
 }
 
