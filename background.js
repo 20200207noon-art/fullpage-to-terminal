@@ -969,16 +969,9 @@ async function scrollStitch(tab, opts) {
                 const sy = cy * CELL;
                 const sw = runCells * CELL;
                 const sh = CELL;
-                // 在 canvas 上 (sx, dstYBase + sy) 位置覆盖
-                if (isInner) {
-                  const rl = (typeof s.rectLeft === "number") ? s.rectLeft : info.rectLeft;
-                  const srcX = Math.round(rl * realDpr) + sx;
-                  const srcY = Math.round((typeof s.rectTop === "number" ? s.rectTop : info.rectTop) * realDpr) + sy;
-                  const dstX = Math.round(rl * realDpr) + sx;
-                  ctx.drawImage(fixCanvas, srcX, srcY, sw, sh, dstX, dstYBase + sy, sw, sh);
-                } else {
-                  ctx.drawImage(fixCanvas, sx, sy, sw, sh, sx, dstYBase + sy, sw, sh);
-                }
+                // fixCanvas 就是整张 viewport（slice[0]），cell 在其中 = sx, sy
+                // canvas 拼接时每段 dst x 也 = sx（canvas 宽 = viewport 宽）
+                ctx.drawImage(fixCanvas, sx, sy, sw, sh, sx, dstYBase + sy, sw, sh);
                 runStart = -1;
               }
             }
