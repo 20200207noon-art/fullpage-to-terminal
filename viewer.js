@@ -76,6 +76,28 @@ function setBannerError(title, sub) {
     imgWrap.style.display = "block";
     renderMeta(lastMeta);
 
+    // Actual-size 切换：图大时 viewer 缩放显示模糊；点击切到 1:1 物理像素清晰
+    const zoomBar = document.getElementById("zoomBar");
+    const zoomToggleBtn = document.getElementById("zoomToggleBtn");
+    const zoomInfo = document.getElementById("zoomInfo");
+    if (zoomBar && zoomToggleBtn) {
+      shotImg.addEventListener("load", () => {
+        const naturalW = shotImg.naturalWidth;
+        const fitW = imgWrap.clientWidth - 40;
+        if (naturalW > fitW) {
+          const scale = Math.round((fitW / naturalW) * 100);
+          zoomInfo.textContent = `Preview at ${scale}% (downscaled — click for actual size)`;
+          zoomBar.style.display = "block";
+        }
+      });
+      const toggle = () => {
+        const isActual = imgWrap.classList.toggle("actual-size");
+        zoomToggleBtn.textContent = isActual ? "↙ Fit width" : "🔍 Actual size";
+      };
+      zoomToggleBtn.addEventListener("click", (e) => { e.stopPropagation(); toggle(); });
+      shotImg.addEventListener("click", (e) => { e.stopPropagation(); toggle(); });
+    }
+
     // 显示诊断日志（如果有）
     if (lastMeta.logs && lastMeta.logs.length > 0) {
       const diagBox = document.getElementById("diagBox");
