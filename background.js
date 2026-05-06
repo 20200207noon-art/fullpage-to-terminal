@@ -984,7 +984,9 @@ async function scrollStitch(tab, opts) {
       }
       const W = sliceImageData[0].width;
       const H = sliceImageData[0].height;
-      const BAND = Math.min(Math.round(H * 0.22), 200);  // 条带高度（物理像素），约 viewport 22% 但不超 200px
+      // 用户逻辑：除了底部 22%，其他都算"上部"（顶部 + 中间）
+      const BOTTOM_BAND = Math.min(Math.round(H * 0.22), 200);
+      const TOP_BAND_END = H - BOTTOM_BAND;  // 上部 band 范围 [0, TOP_BAND_END)
 
       // 计算指定 y 行的 hash
       function rowHash(imageData, y) {
@@ -999,10 +1001,10 @@ async function scrollStitch(tab, opts) {
         return h;
       }
 
-      // 顶部条带：找"在所有段都相同"的行
-      const topFixed = new Uint8Array(BAND);
+      // 上部条带（含中间）：找"在所有段都相同"的行
+      const topFixed = new Uint8Array(TOP_BAND_END);
       let topCount = 0;
-      for (let y = 0; y < BAND; y++) {
+      for (let y = 0; y < TOP_BAND_END; y++) {
         const h0 = rowHash(sliceImageData[0], y);
         let allSame = true;
         for (let i = 1; i < sliceImageData.length; i++) {
@@ -1011,11 +1013,11 @@ async function scrollStitch(tab, opts) {
         if (allSame) { topFixed[y] = 1; topCount++; }
       }
 
-      // 底部条带：同理
-      const bottomFixed = new Uint8Array(BAND);
+      // 底部条带：同理（在 [H-BOTTOM_BAND, H)）
+      const bottomFixed = new Uint8Array(BOTTOM_BAND);
       let botCount = 0;
-      for (let by = 0; by < BAND; by++) {
-        const y = H - BAND + by;
+      for (let by = 0; by < BOTTOM_BAND; by++) {
+        const y = H - BOTTOM_BAND + by;
         const h0 = rowHash(sliceImageData[0], y);
         let allSame = true;
         for (let i = 1; i < sliceImageData.length; i++) {
@@ -1024,7 +1026,7 @@ async function scrollStitch(tab, opts) {
         if (allSame) { bottomFixed[by] = 1; botCount++; }
       }
 
-      fpsLog(`band-diff: top ${topCount}/${BAND} fixed rows, bottom ${botCount}/${BAND} fixed rows`);
+      fpsLog(`band-diff: top+mid ${topCount}/${TOP_BAND_END} fixed rows, bottom ${botCount}/${BOTTOM_BAND} fixed rows`);
 
       // 应用顶部覆盖：每段（除 slice[0]）的顶部 fixed 行用 slice[0] 同行覆盖
       // 应用底部覆盖：所有段除最后一段不动，把 slice[0] 的底部 fixed 行贴到 canvas 最底部
@@ -1032,19 +1034,18 @@ async function scrollStitch(tab, opts) {
       const s0ctx = slice0Canvas.getContext("2d");
       s0ctx.putImageData(sliceImageData[0], 0, 0);
 
-      // 顶部：覆盖 slice[1..N] 各段顶部的 fixed 行
-      if (topCount > 0 && topCount < BAND * 0.95) {
+      // 上部：覆盖 slice[1..N] 各段上部 fixed 行（用 slice[0] 同行）
+      if (topCount > 0 && topCount < TOP_BAND_END * 0.95) {
         for (let i = 1; i < decodedSlices.length; i++) {
           const s = decodedSlices[i];
           const drawH = Math.min(vh, h - s.y);
           if (drawH <= 0) continue;
           const dstYBase = Math.round(s.y * realDpr);
-          // 找连续 run
           let runStart = -1;
-          for (let y = 0; y <= BAND; y++) {
-            const isFixed = y < BAND && topFixed[y];
+          for (let y = 0; y <= TOP_BAND_END; y++) {
+            const isFixed = y < TOP_BAND_END && topFixed[y];
             if (isFixed && runStart < 0) runStart = y;
-            if ((!isFixed || y === BAND) && runStart >= 0) {
+            if ((!isFixed || y === TOP_BAND_END) && runStart >= 0) {
               const runLen = y - runStart;
               ctx.drawImage(slice0Canvas, 0, runStart, W, runLen, 0, dstYBase + runStart, W, runLen);
               runStart = -1;
@@ -1053,22 +1054,20 @@ async function scrollStitch(tab, opts) {
         }
       }
 
-      // 底部：把 slice[0] 的 fixed 底部行覆盖到 canvas 最底部对应位置
-      if (botCount > 0 && botCount < BAND * 0.95) {
-        const canvasBottomY = canvasH - H;  // canvas 最末一段的起始 y（物理像素）
+      // 底部：用 slice[0] 底部 fixed 行覆盖到各段底部位置（每段都覆盖，自然最底也是它）
+      if (botCount > 0 && botCount < BOTTOM_BAND * 0.95) {
         let runStart = -1;
-        for (let by = 0; by <= BAND; by++) {
-          const isFixed = by < BAND && bottomFixed[by];
+        for (let by = 0; by <= BOTTOM_BAND; by++) {
+          const isFixed = by < BOTTOM_BAND && bottomFixed[by];
           if (isFixed && runStart < 0) runStart = by;
-          if ((!isFixed || by === BAND) && runStart >= 0) {
+          if ((!isFixed || by === BOTTOM_BAND) && runStart >= 0) {
             const runLen = by - runStart;
-            const srcY = H - BAND + runStart;
-            // 覆盖 canvas 各段（除 slice[0]）的底部条带 + 最末段强制贴底
+            const srcY = H - BOTTOM_BAND + runStart;
             for (let i = 1; i < decodedSlices.length; i++) {
               const s = decodedSlices[i];
               const drawH = Math.min(vh, h - s.y);
               if (drawH <= 0) continue;
-              const dstY = Math.round(s.y * realDpr) + (H - BAND + runStart);
+              const dstY = Math.round(s.y * realDpr) + (H - BOTTOM_BAND + runStart);
               if (dstY + runLen <= canvasH) {
                 ctx.drawImage(slice0Canvas, 0, srcY, W, runLen, 0, dstY, W, runLen);
               }
@@ -1078,7 +1077,7 @@ async function scrollStitch(tab, opts) {
         }
       }
 
-      fpsLog(`band-diff applied: top ${topCount} rows on ${decodedSlices.length - 1} slices, bottom ${botCount} rows`);
+      fpsLog(`band-diff applied: top+mid ${topCount} rows on ${decodedSlices.length - 1} slices, bottom ${botCount} rows`);
     } catch (e) {
       console.warn("[fullpage-shot] band-diff failed:", e.message);
       fpsLog("band-diff failed: " + e.message);
