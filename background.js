@@ -917,10 +917,11 @@ async function scrollStitch(tab, opts) {
     }
   }
 
-  // ── 贴 sticky overlays（顶部固定贴顶部，底部固定贴最底部）─────────
-  // 之前所有 overlay 都贴在 viewport 原位置，导致底部输入框出现在长截图中段（错）。
-  // 现在按 viewport 中线判断：上半 = 顶部固定（贴 canvas 顶部）；下半 = 底部固定（贴 canvas 最底部）
-  if (firstFrameDataUrl && stickyOverlays.length > 0) {
+  // ── sticky overlay paste 已停用 ──
+  // 这部分代码本质上是"掩盖"：用 first frame 的 sticky 元素贴回截图覆盖中段重复。
+  // 但它无法真正解决 share 按钮 / input bar 等"非 CSS-fixed 但视觉固定"元素的问题，
+  // 反而可能在拼接中造成视觉错位假象。用户决定接受原始重复，不做掩盖。
+  if (false && firstFrameDataUrl && stickyOverlays.length > 0) {
     try {
       const ffBlob = await (await fetch(firstFrameDataUrl)).blob();
       const ffBmp = await createImageBitmap(ffBlob);
