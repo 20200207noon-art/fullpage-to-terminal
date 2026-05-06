@@ -933,10 +933,10 @@ async function scrollStitch(tab, opts) {
       const ffBlob = await (await fetch(firstFrameDataUrl)).blob();
       const ffBmp = await createImageBitmap(ffBlob);
       const VPH = info.windowVH || info.viewportH;  // viewport 物理高度（CSS px）
-      // "真正贴底的小条 bar" 才算底部。规则：
-      //   底部边缘距 viewport 底 < 50px  AND  元素高度 < viewport 一半
-      // sidebar（占满整高）会因 height >= VPH/2 被分到"顶部"，贴原位置
-      const BOTTOM_GAP_THRESHOLD = 50;
+      // "真正贴底的 bar" 才算底部。规则：
+      //   底部边缘距 viewport 底 < 20% viewport 高（自适应，约 150-200px on 839px viewport）
+      //   AND 元素高度 < viewport 一半（排除占满高的 sidebar）
+      const BOTTOM_GAP_THRESHOLD = Math.max(80, VPH * 0.2);
       const HEIGHT_RATIO_MAX = 0.5;
       let topCount = 0, bottomCount = 0;
       for (const ov of stickyOverlays) {
