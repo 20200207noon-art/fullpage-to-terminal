@@ -430,6 +430,25 @@ function removeProgressUI() {
   delete window[KEY];
 }
 
+// 注入到目标 tab：拿页面真实背景色（用于 canvas 填充，避免深色页面留白边）
+function getPageBackgroundColor() {
+  const candidates = [document.body, document.documentElement];
+  for (const el of document.querySelectorAll("main, [role='main'], #app, #root")) {
+    candidates.push(el);
+  }
+  for (const el of candidates) {
+    if (!el) continue;
+    try {
+      const cs = getComputedStyle(el);
+      const bg = cs.backgroundColor;
+      if (bg && bg !== "rgba(0, 0, 0, 0)" && bg !== "transparent") {
+        return bg;
+      }
+    } catch (_) {}
+  }
+  return "#ffffff";
+}
+
 // 注入到目标 tab：检测所有 CSS position: fixed/sticky 元素，返回它们的视口 rect。
 // 简化版：纯 CSS 检测，不做 scroll-then-measure（那会触发 React re-render 破坏页面）。
 // 漏掉的"视觉固定但 CSS 不是 fixed"的元素（如 Share 按钮）暂时接受重复出现，
