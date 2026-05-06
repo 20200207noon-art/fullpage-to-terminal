@@ -976,11 +976,11 @@ async function scrollStitch(tab, opts) {
       const BOTTOM_BAND = Math.min(Math.round(H * 0.22), 200);
       const BOTTOM_START = H - BOTTOM_BAND;
 
-      // 在底部条带逐**像素**找"所有段都相同"的像素（不是整行）—— Claude.ai 输入框检测
-      // 性能：1920×200 = 384K 像素 × N 段 ≈ 几 MB ops，几百毫秒
-      const bottomMask = new Uint8Array(W * BOTTOM_BAND);  // 1=固定像素
+      // 在底部条带逐**像素**找"所有段都几乎相同"的像素 — fuzzy 匹配（RGB ±10 容忍抗锯齿）
+      const bottomMask = new Uint8Array(W * BOTTOM_BAND);
       let fixedPxCount = 0;
       const data0 = sliceImageData[0].data;
+      const TOL = 10;
       for (let by = 0; by < BOTTOM_BAND; by++) {
         const y = BOTTOM_START + by;
         for (let x = 0; x < W; x++) {
@@ -989,7 +989,9 @@ async function scrollStitch(tab, opts) {
           let allSame = true;
           for (let k = 1; k < sliceImageData.length; k++) {
             const dk = sliceImageData[k].data;
-            if (dk[i] !== r0 || dk[i + 1] !== g0 || dk[i + 2] !== b0) {
+            if (Math.abs(dk[i] - r0) > TOL ||
+                Math.abs(dk[i + 1] - g0) > TOL ||
+                Math.abs(dk[i + 2] - b0) > TOL) {
               allSame = false; break;
             }
           }
@@ -1000,7 +1002,7 @@ async function scrollStitch(tab, opts) {
         }
       }
       const totalBottomPx = W * BOTTOM_BAND;
-      fpsLog(`bottom-px-diff: ${fixedPxCount}/${totalBottomPx} pixels are visually fixed (${(fixedPxCount/totalBottomPx*100).toFixed(1)}%)`);
+      fpsLog(`bottom-px-diff: ${fixedPxCount}/${totalBottomPx} pixels visually fixed (${(fixedPxCount/totalBottomPx*100).toFixed(1)}%, fuzzy ±${TOL})`);
 
       // 应用：建一个 RGBA buffer，固定像素 = slice[0] 像素 + 透明背景（其余像素=透明）
       // 然后把这个 buffer 贴到 canvas 各段的底部位置 + canvas 最底部一次
