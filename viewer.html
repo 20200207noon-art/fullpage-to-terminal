@@ -136,6 +136,9 @@
         max-width: 100%;
         height: auto;
         box-shadow: 0 4px 32px rgba(0,0,0,0.5);
+        /* 关键：禁用浏览器对缩小图片的模糊插值，让文字边缘保持清晰 */
+        image-rendering: -webkit-optimize-contrast;
+        image-rendering: crisp-edges;
       }
 
       .footer {
