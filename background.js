@@ -933,6 +933,11 @@ async function scrollStitch(tab, opts) {
       const ffBlob = await (await fetch(firstFrameDataUrl)).blob();
       const ffBmp = await createImageBitmap(ffBlob);
       const VPH = info.windowVH || info.viewportH;  // viewport 物理高度（CSS px）
+      // "真正贴底的小条 bar" 才算底部。规则：
+      //   底部边缘距 viewport 底 < 50px  AND  元素高度 < viewport 一半
+      // sidebar（占满整高）会因 height >= VPH/2 被分到"顶部"，贴原位置
+      const BOTTOM_GAP_THRESHOLD = 50;
+      const HEIGHT_RATIO_MAX = 0.5;
       let topCount = 0, bottomCount = 0;
       for (const ov of stickyOverlays) {
         const sx = Math.round(ov.left * realDpr);
@@ -940,17 +945,16 @@ async function scrollStitch(tab, opts) {
         const sw = Math.round(ov.width * realDpr);
         const sh = Math.round(ov.height * realDpr);
         const dx = Math.round(ov.left * realDpr);
-        // 元素中心点在 viewport 上半还是下半？
-        const ovCenter = ov.top + ov.height / 2;
-        const isBottom = ovCenter > VPH / 2;
+        const distFromBottom = VPH - (ov.top + ov.height);
+        const isSmallBar = ov.height < VPH * HEIGHT_RATIO_MAX;
+        const isBottom = distFromBottom < BOTTOM_GAP_THRESHOLD && isSmallBar;
         let dy;
         if (isBottom) {
-          // 底部固定：距离 viewport 底部多远 = bottomGap，贴到 canvas 距底部 bottomGap 处
-          const bottomGap = VPH - (ov.top + ov.height);
-          dy = canvasH - sh - Math.round(bottomGap * realDpr);
+          // 贴 canvas 最底部，保留原距底 gap
+          dy = canvasH - sh - Math.round(distFromBottom * realDpr);
           bottomCount++;
         } else {
-          // 顶部固定：贴在 canvas 顶部 ov.top 处
+          // 默认贴原位置（顶部 + sidebar 都走这里）
           dy = Math.round(ov.top * realDpr);
           topCount++;
         }
