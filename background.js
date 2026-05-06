@@ -517,7 +517,9 @@ function neutralizeStickyAndFixed() {
         prevDisplay: el.style.display,
         prevVisibility: el.style.visibility
       });
-      el.style.setProperty("display", "none", "important");
+      // 用 visibility:hidden 而不是 display:none —— 保留布局空间，
+      // main 不会因为 sidebar 消失而扩展到 viewport 左侧（避免后续段"内容左偏"）
+      el.style.setProperty("visibility", "hidden", "important");
       hiddenCount++;
     }
   }
