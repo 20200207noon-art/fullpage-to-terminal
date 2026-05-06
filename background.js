@@ -959,10 +959,10 @@ async function scrollStitch(tab, opts) {
     }
   }
 
-  // ── 底部条带逐像素 diff：只针对 viewport 底部 22%，找出真正"在所有段都不动"的像素 ──
-  // 用 slice[0] 那些像素覆盖每段对应位置 + 最末贴一份到 canvas 最底
-  // 适用场景：Claude.ai 输入框（CSS 不是 fixed/sticky 但视觉固定）
-  if (decodedSlices.length >= 2) {
+  // ── post-capture pixel diff 已尝试 4 次（row/cell/band/per-pixel），都引入新 bug ──
+  // Claude.ai 半透明 input bar 像素跨段差异 > fuzzy 阈值，强行覆盖会破坏 main 内容
+  // 接受现状：CSS-fixed/sticky overlay 处理 + 视觉固定但 CSS 不是 fixed 的元素会重复
+  if (false && decodedSlices.length >= 2) {
     try {
       // 取所有段的 ImageData
       const sliceImageData = [];
