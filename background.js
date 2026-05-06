@@ -967,8 +967,123 @@ async function scrollStitch(tab, opts) {
     }
   }
 
-  // 注：cell-diff 已移除（v1.14.x 试过，会把深色背景 cell 误判为 fixed，导致拼接重叠）
-  // sticky 元素重复处理依赖 CSS-position 检测 + first frame overlay 那条路
+  // ── Band-row diff: 只在顶部 + 底部条带做 row-hash，中间 main 内容不管 ──
+  // 用户的"顶部不动 / 底部不动"逻辑精准实现
+  // 避免 cell-diff 在深色背景误判（中间区域不参与 diff）
+  // 避免 row-hash 全宽误判（main 内容污染整行 hash 不再是问题，因为中间不算）
+  if (decodedSlices.length >= 2) {
+    try {
+      // 取所有段的 ImageData
+      const sliceImageData = [];
+      for (const s of decodedSlices) {
+        const tmp = new OffscreenCanvas(s.bmp.width, s.bmp.height);
+        const tctx = tmp.getContext("2d");
+        tctx.imageSmoothingEnabled = false;
+        tctx.drawImage(s.bmp, 0, 0);
+        sliceImageData.push(tctx.getImageData(0, 0, s.bmp.width, s.bmp.height));
+      }
+      const W = sliceImageData[0].width;
+      const H = sliceImageData[0].height;
+      const BAND = Math.min(Math.round(H * 0.22), 200);  // 条带高度（物理像素），约 viewport 22% 但不超 200px
+
+      // 计算指定 y 行的 hash
+      function rowHash(imageData, y) {
+        let h = 2166136261 | 0;
+        const base = y * W * 4;
+        for (let x = 0; x < W; x += 4) {
+          const i = base + x * 4;
+          h = (h ^ imageData.data[i]) * 16777619 | 0;
+          h = (h ^ imageData.data[i + 1]) * 16777619 | 0;
+          h = (h ^ imageData.data[i + 2]) * 16777619 | 0;
+        }
+        return h;
+      }
+
+      // 顶部条带：找"在所有段都相同"的行
+      const topFixed = new Uint8Array(BAND);
+      let topCount = 0;
+      for (let y = 0; y < BAND; y++) {
+        const h0 = rowHash(sliceImageData[0], y);
+        let allSame = true;
+        for (let i = 1; i < sliceImageData.length; i++) {
+          if (rowHash(sliceImageData[i], y) !== h0) { allSame = false; break; }
+        }
+        if (allSame) { topFixed[y] = 1; topCount++; }
+      }
+
+      // 底部条带：同理
+      const bottomFixed = new Uint8Array(BAND);
+      let botCount = 0;
+      for (let by = 0; by < BAND; by++) {
+        const y = H - BAND + by;
+        const h0 = rowHash(sliceImageData[0], y);
+        let allSame = true;
+        for (let i = 1; i < sliceImageData.length; i++) {
+          if (rowHash(sliceImageData[i], y) !== h0) { allSame = false; break; }
+        }
+        if (allSame) { bottomFixed[by] = 1; botCount++; }
+      }
+
+      fpsLog(`band-diff: top ${topCount}/${BAND} fixed rows, bottom ${botCount}/${BAND} fixed rows`);
+
+      // 应用顶部覆盖：每段（除 slice[0]）的顶部 fixed 行用 slice[0] 同行覆盖
+      // 应用底部覆盖：所有段除最后一段不动，把 slice[0] 的底部 fixed 行贴到 canvas 最底部
+      const slice0Canvas = new OffscreenCanvas(W, H);
+      const s0ctx = slice0Canvas.getContext("2d");
+      s0ctx.putImageData(sliceImageData[0], 0, 0);
+
+      // 顶部：覆盖 slice[1..N] 各段顶部的 fixed 行
+      if (topCount > 0 && topCount < BAND * 0.95) {
+        for (let i = 1; i < decodedSlices.length; i++) {
+          const s = decodedSlices[i];
+          const drawH = Math.min(vh, h - s.y);
+          if (drawH <= 0) continue;
+          const dstYBase = Math.round(s.y * realDpr);
+          // 找连续 run
+          let runStart = -1;
+          for (let y = 0; y <= BAND; y++) {
+            const isFixed = y < BAND && topFixed[y];
+            if (isFixed && runStart < 0) runStart = y;
+            if ((!isFixed || y === BAND) && runStart >= 0) {
+              const runLen = y - runStart;
+              ctx.drawImage(slice0Canvas, 0, runStart, W, runLen, 0, dstYBase + runStart, W, runLen);
+              runStart = -1;
+            }
+          }
+        }
+      }
+
+      // 底部：把 slice[0] 的 fixed 底部行覆盖到 canvas 最底部对应位置
+      if (botCount > 0 && botCount < BAND * 0.95) {
+        const canvasBottomY = canvasH - H;  // canvas 最末一段的起始 y（物理像素）
+        let runStart = -1;
+        for (let by = 0; by <= BAND; by++) {
+          const isFixed = by < BAND && bottomFixed[by];
+          if (isFixed && runStart < 0) runStart = by;
+          if ((!isFixed || by === BAND) && runStart >= 0) {
+            const runLen = by - runStart;
+            const srcY = H - BAND + runStart;
+            // 覆盖 canvas 各段（除 slice[0]）的底部条带 + 最末段强制贴底
+            for (let i = 1; i < decodedSlices.length; i++) {
+              const s = decodedSlices[i];
+              const drawH = Math.min(vh, h - s.y);
+              if (drawH <= 0) continue;
+              const dstY = Math.round(s.y * realDpr) + (H - BAND + runStart);
+              if (dstY + runLen <= canvasH) {
+                ctx.drawImage(slice0Canvas, 0, srcY, W, runLen, 0, dstY, W, runLen);
+              }
+            }
+            runStart = -1;
+          }
+        }
+      }
+
+      fpsLog(`band-diff applied: top ${topCount} rows on ${decodedSlices.length - 1} slices, bottom ${botCount} rows`);
+    } catch (e) {
+      console.warn("[fullpage-shot] band-diff failed:", e.message);
+      fpsLog("band-diff failed: " + e.message);
+    }
+  }
 
   // 统一 close 所有 bmp（row-hash diff 之后）
   for (const s of decodedSlices) {
