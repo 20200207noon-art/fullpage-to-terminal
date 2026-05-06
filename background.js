@@ -11,6 +11,16 @@
 
 const MAX_SLICE_HEIGHT = 16000;
 const MAX_FINAL_HEIGHT = 16384; // OffscreenCanvas 单画布高度上限
+
+// 全局日志缓冲区，每次 capture 开始时清空。同时输出 console + 存进 buffer 给 viewer 显示
+let currentCaptureLogs = [];
+function fpsLog(...args) {
+  const line = "[fullpage-shot] " + args.map(a =>
+    typeof a === "string" ? a : (() => { try { return JSON.stringify(a); } catch (_) { return String(a); } })()
+  ).join(" ");
+  currentCaptureLogs.push(line);
+  console.log(line);
+}
 const BLOCKED_SCHEMES = [
   "chrome://",
   "chrome-extension://",
@@ -43,6 +53,9 @@ chrome.commands.onCommand.addListener((command) => {
 });
 
 async function capture(tab) {
+  // 每次 capture 重置日志缓冲
+  currentCaptureLogs = [];
+  fpsLog("capture started, tab.url=", tab && tab.url);
   if (!tab || !tab.id) throw new Error("No active tab. Click a normal web page first, then press the hotkey.");
   const url = tab.url || "";
   if (BLOCKED_SCHEMES.some((s) => url.startsWith(s))) {
@@ -112,7 +125,7 @@ async function capture(tab) {
     } catch (_) {}
     const detected = await execInPage(tab.id, detectStickyAndFixedRects);
     if (Array.isArray(detected)) stickyOverlays = detected;
-    console.log("[fullpage-shot] first frame captured, sticky overlays:", stickyOverlays.length);
+    fpsLog("first frame captured, sticky overlays:", stickyOverlays.length);
   } catch (e) {
     console.warn("[fullpage-shot] first frame / overlay detection failed:", e.message);
   }
@@ -182,6 +195,24 @@ async function capture(tab) {
   meta.savedPath = savedPath;
   meta.saveError = saveError;
 
+  // 收集 inject 函数里的日志（跑在目标 tab 的）合并到 background 自己的日志
+  try {
+    const injectLogsResult = await chrome.scripting.executeScript({
+      target: { tabId: tab.id, allFrames: false },
+      func: () => {
+        const out = window.__fpsInjectLogs || [];
+        window.__fpsInjectLogs = [];
+        return out;
+      }
+    });
+    const injectLogs = (injectLogsResult && injectLogsResult[0] && Array.isArray(injectLogsResult[0].result))
+      ? injectLogsResult[0].result : [];
+    for (const l of injectLogs) {
+      currentCaptureLogs.push("[inject] " + l);
+    }
+  } catch (_) {}
+
+  meta.logs = currentCaptureLogs.slice();
   await chrome.storage.local.set({ lastShot: { dataUrl, meta } });
 
   // 进度推到 100% — viewer 即将打开
@@ -206,7 +237,7 @@ async function capture(tab) {
       );
       if (resp && resp.ok) {
         meta.clipboardMode = "file-ref";
-        console.log("[fullpage-shot] file ref written to clipboard");
+        fpsLog("file ref written to clipboard");
       } else {
         meta.clipboardMode = "file-ref-failed";
         meta.clipboardError = (resp && resp.error) || "unknown";
@@ -444,7 +475,10 @@ function detectStickyAndFixedRects() {
       });
     }
   }
-  console.log(`[fullpage-shot] hidden ${stuck.length} visually-stuck elements at detect time`);
+  const _detectLog = `hidden ${stuck.length} visually-stuck elements at detect time`;
+  console.log("[fullpage-shot]", _detectLog);
+  if (!window.__fpsInjectLogs) window.__fpsInjectLogs = [];
+  window.__fpsInjectLogs.push(_detectLog);
 
   // 5. 滚回去
   if (useInner) {
@@ -464,7 +498,10 @@ function detectStickyAndFixedRects() {
     );
     if (!containedByExisting) dedup.push(r);
   }
-  console.log(`[fullpage-shot] stuck elements: ${candidates.length} candidates, ${stuck.length} stuck, ${dedup.length} after dedup`);
+  const _stuckLog = `stuck elements: ${candidates.length} candidates, ${stuck.length} stuck, ${dedup.length} after dedup`;
+  console.log("[fullpage-shot]", _stuckLog);
+  if (!window.__fpsInjectLogs) window.__fpsInjectLogs = [];
+  window.__fpsInjectLogs.push(_stuckLog);
   return dedup;
 }
 
@@ -505,7 +542,10 @@ function neutralizeStickyAndFixed() {
       hiddenCount++;
     }
   }
-  console.log("[fullpage-shot] hidden", hiddenCount, "fixed/sticky elements");
+  const _hideLog = "hidden " + hiddenCount + " fixed/sticky elements (CSS-based)";
+  console.log("[fullpage-shot]", _hideLog);
+  if (!window.__fpsInjectLogs) window.__fpsInjectLogs = [];
+  window.__fpsInjectLogs.push(_hideLog);
 
   // 3. body/html overflow:hidden 解掉
   const htmlEl = document.documentElement;
@@ -660,10 +700,12 @@ async function scrollStitch(tab, opts) {
     const bestEl = candidates[0] ? candidates[0].el : null;
 
     // 调试日志
-    console.log("[fullpage-shot] inner candidates:", candidates.length);
+    if (!window.__fpsInjectLogs) window.__fpsInjectLogs = [];
+    const _logs = ["inner candidates: " + candidates.length];
     candidates.slice(0, 5).forEach((c, i) => {
-      console.log(`  #${i} <${c.tag}> w=${c.cw} ch=${c.ch} sh=${c.sh} area=${c.area}`);
+      _logs.push(`  #${i} <${c.tag}> w=${c.cw} ch=${c.ch} sh=${c.sh} area=${c.area}`);
     });
+    _logs.forEach(l => { console.log("[fullpage-shot]", l); window.__fpsInjectLogs.push(l); });
 
     const winScrollable = (document.documentElement.scrollHeight - VH) | 0;
     let mode = "window";
@@ -673,7 +715,10 @@ async function scrollStitch(tab, opts) {
         mode = "inner";
       }
     }
-    console.log(`[fullpage-shot] mode=${mode}, winScrollable=${winScrollable}`);
+    const _modeLog = `mode=${mode}, winScrollable=${winScrollable}`;
+    console.log("[fullpage-shot]", _modeLog);
+    if (!window.__fpsInjectLogs) window.__fpsInjectLogs = [];
+    window.__fpsInjectLogs.push(_modeLog);
     window.__fpsHost = mode === "inner" ? bestEl : null;
     window.__fpsMode = mode;
 
@@ -714,7 +759,7 @@ async function scrollStitch(tab, opts) {
   if (!info) throw new Error(
     `Could not access page content for capture.\n\nLikely causes:\n• The page has a strict Content-Security-Policy that blocks script injection\n• The page didn't finish loading\n• You're on an internal page (chrome://, etc.)\n\nReload the page and try again. If it still fails, check Service Worker console at chrome://extensions for details.`
   );
-  console.log("[fullpage-shot] scroll info:", info);
+  fpsLog("scroll info:", info);
 
   const w = Math.max(1, info.width);
   let h = Math.max(1, info.height);
@@ -867,7 +912,7 @@ async function scrollStitch(tab, opts) {
         if (d < bestDelta) { bestDelta = d; best = candidate; }
       }
       realDpr = best;
-      console.log(`[fullpage-shot] dpr: window.devicePixelRatio=${dpr}, measured=${measured.toFixed(3)}, using=${realDpr}`);
+      fpsLog(`dpr: window.devicePixelRatio=${dpr}, measured=${measured.toFixed(3)}, using=${realDpr}`);
     }
     decodedSlices.push({ ...s, bmp });
   }
@@ -921,7 +966,7 @@ async function scrollStitch(tab, opts) {
         ctx.drawImage(ffBmp, sx, sy, sw, sh, dx, dy, sw, sh);
       }
       ffBmp.close();
-      console.log("[fullpage-shot] pasted", stickyOverlays.length, "sticky overlays in", info.mode, "mode at realDpr=" + realDpr);
+      fpsLog("pasted", stickyOverlays.length, "sticky overlays in", info.mode, "mode at realDpr=" + realDpr);
     } catch (e) {
       console.warn("[fullpage-shot] sticky overlay paste failed:", e.message);
     }
@@ -978,11 +1023,20 @@ async function playShutter() {
 async function reportError(tab, err) {
   console.error("[fullpage-shot]", err);
   const msg = (err && err.message) || String(err);
-  // 把出问题的 tab URL 也带上，方便用户/我们诊断
   const fullMsg = tab && tab.url ? `${msg}\n\n📍 Tried to capture: ${tab.url}` : msg;
+  // 出错也带上日志，方便诊断
+  let logs = currentCaptureLogs.slice();
+  try {
+    const r = await chrome.scripting.executeScript({
+      target: { tabId: tab.id, allFrames: false },
+      func: () => { const out = window.__fpsInjectLogs || []; window.__fpsInjectLogs = []; return out; }
+    });
+    const il = (r && r[0] && Array.isArray(r[0].result)) ? r[0].result : [];
+    for (const l of il) logs.push("[inject] " + l);
+  } catch (_) {}
   try {
     await chrome.storage.local.set({
-      lastShot: { error: fullMsg, capturedAt: Date.now() }
+      lastShot: { error: fullMsg, capturedAt: Date.now(), logs }
     });
     await chrome.tabs.create({ url: chrome.runtime.getURL("viewer.html") });
   } catch (_) {}

@@ -58,6 +58,15 @@ function setBannerError(title, sub) {
     }
     if (lastShot.error) {
       setBannerError("Capture failed", escapeHtml(lastShot.error));
+      // 失败也显示日志
+      if (lastShot.logs && lastShot.logs.length > 0) {
+        const diagBox = document.getElementById("diagBox");
+        const diagText = document.getElementById("diagText");
+        if (diagBox && diagText) {
+          diagText.textContent = lastShot.logs.join("\n");
+          diagBox.style.display = "block";
+        }
+      }
       return;
     }
     lastDataUrl = lastShot.dataUrl;
@@ -66,6 +75,16 @@ function setBannerError(title, sub) {
     shotImg.src = lastDataUrl;
     imgWrap.style.display = "block";
     renderMeta(lastMeta);
+
+    // 显示诊断日志（如果有）
+    if (lastMeta.logs && lastMeta.logs.length > 0) {
+      const diagBox = document.getElementById("diagBox");
+      const diagText = document.getElementById("diagText");
+      if (diagBox && diagText) {
+        diagText.textContent = lastMeta.logs.join("\n");
+        diagBox.style.display = "block";
+      }
+    }
 
     bindDownload();
 
