@@ -76,30 +76,7 @@ function setBannerError(title, sub) {
     imgWrap.style.display = "block";
     renderMeta(lastMeta);
 
-    // 默认就用 actual-size（1:1 物理像素清晰）；只有用户主动点击才切换到 fit-width
-    const zoomBar = document.getElementById("zoomBar");
-    const zoomToggleBtn = document.getElementById("zoomToggleBtn");
-    const zoomInfo = document.getElementById("zoomInfo");
-    if (zoomBar && zoomToggleBtn) {
-      // 默认：actual size = 100% 清晰
-      imgWrap.classList.add("actual-size");
-      zoomToggleBtn.textContent = "↙ Fit width";
-      shotImg.addEventListener("load", () => {
-        zoomInfo.textContent = `Showing actual size (${shotImg.naturalWidth}×${shotImg.naturalHeight}px) — 100% sharpness`;
-        zoomBar.style.display = "block";
-      });
-      const toggle = () => {
-        const isActual = imgWrap.classList.toggle("actual-size");
-        zoomToggleBtn.textContent = isActual ? "↙ Fit width" : "🔍 Actual size";
-        if (zoomInfo) {
-          zoomInfo.textContent = isActual
-            ? `Showing actual size (${shotImg.naturalWidth}×${shotImg.naturalHeight}px) — 100% sharpness`
-            : `Fitted to viewer width (downscaled, may look soft)`;
-        }
-      };
-      zoomToggleBtn.addEventListener("click", (e) => { e.stopPropagation(); toggle(); });
-      shotImg.addEventListener("click", (e) => { e.stopPropagation(); toggle(); });
-    }
+    // viewer 默认 actual-size（已通过 HTML class）— 永远 100% 清晰，无切换
 
     // 显示诊断日志（如果有）
     if (lastMeta.logs && lastMeta.logs.length > 0) {

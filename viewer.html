@@ -19,9 +19,14 @@
       * { box-sizing: border-box; }
       html, body {
         margin: 0; padding: 0;
+        height: 100vh;
+        overflow: hidden;
         background: var(--bg); color: var(--text);
         font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Helvetica Neue", Arial, sans-serif;
       }
+      body { display: flex; flex-direction: column; }
+      .banner, .fallback-action, .footer, #errBox, #diagBox { flex: 0 0 auto; }
+      .img-wrap { flex: 1 1 auto; overflow: auto; }
 
       /* ── 大成功横幅：唯一的视觉重点 ───────────────────── */
       .banner {
@@ -227,11 +232,7 @@
       <button id="copyBtn" type="button">📋 Click to copy path</button>
     </div>
 
-    <div class="zoom-bar" id="zoomBar" style="display:none;">
-      <span id="zoomInfo"></span>
-      <button id="zoomToggleBtn" type="button">🔍 Actual size</button>
-    </div>
-    <div class="img-wrap" id="imgWrap" style="display:none;">
+    <div class="img-wrap actual-size" id="imgWrap" style="display:none;">
       <img id="shotImg" alt="screenshot">
     </div>
 
