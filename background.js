@@ -329,48 +329,76 @@ async function saveToDownloads(dataUrl, sourceUrl) {
 function installProgressUI() {
   const KEY = "__fullpageShotProgressUI__";
   if (window[KEY]) return;
-  // 整个 UI 容器（统一管理，方便 hide/remove）
   const root = document.createElement("div");
   root.id = "__fullpage_shot_progress_root__";
-  root.setAttribute("data-fullpage-shot", "ui"); // 给 neutralize 跳过用
+  root.setAttribute("data-fullpage-shot", "ui");
   root.style.cssText = [
     "all: initial",
     "position: fixed",
-    "left: 0", "top: 0", "right: 0",
+    "left: 0", "top: 0", "right: 0", "bottom: 0",
     "z-index: 2147483647",
     "pointer-events: none",
     "font-family: -apple-system, BlinkMacSystemFont, sans-serif"
   ].join(";");
-  // 顶部细线进度条
+
+  // 顶部彩色细线进度条（4px，更明显）
   const barWrap = document.createElement("div");
-  barWrap.style.cssText = "height: 3px; background: rgba(0,0,0,0.15); width: 100%;";
+  barWrap.style.cssText = [
+    "position: absolute", "top: 0", "left: 0", "right: 0",
+    "height: 4px", "background: rgba(0,0,0,0.15)"
+  ].join(";");
   const bar = document.createElement("div");
   bar.id = "__fullpage_shot_progress_bar__";
-  bar.style.cssText = "height: 100%; width: 0%; background: linear-gradient(90deg, #2da44e, #58a6ff); transition: width 200ms ease;";
+  bar.style.cssText = [
+    "height: 100%", "width: 0%",
+    "background: linear-gradient(90deg, #2da44e 0%, #58a6ff 50%, #f78166 100%)",
+    "box-shadow: 0 0 8px rgba(88, 166, 255, 0.6)",
+    "transition: width 200ms ease"
+  ].join(";");
   barWrap.appendChild(bar);
-  // 中央提示卡片
+
+  // 右下角大卡片（不挡顶部主内容，醒目）
   const card = document.createElement("div");
   card.id = "__fullpage_shot_progress_card__";
   card.style.cssText = [
-    "position: fixed",
-    "left: 50%", "top: 24px",
-    "transform: translateX(-50%)",
-    "background: rgba(15, 17, 22, 0.95)",
-    "color: #e6edf3",
-    "padding: 10px 18px",
-    "border-radius: 10px",
-    "border: 1px solid rgba(255,255,255,0.1)",
-    "box-shadow: 0 8px 32px rgba(0,0,0,0.4)",
-    "font-size: 14px",
-    "font-weight: 600",
-    "letter-spacing: 0.2px",
-    "white-space: nowrap"
+    "position: absolute",
+    "right: 24px", "bottom: 24px",
+    "background: linear-gradient(135deg, #1f6feb, #2da44e)",
+    "color: #ffffff",
+    "padding: 16px 22px",
+    "border-radius: 14px",
+    "border: 2px solid rgba(255,255,255,0.25)",
+    "box-shadow: 0 12px 48px rgba(0,0,0,0.55), 0 0 0 4px rgba(88,166,255,0.15)",
+    "font-size: 16px",
+    "font-weight: 700",
+    "letter-spacing: 0.3px",
+    "white-space: nowrap",
+    "min-width: 220px",
+    "display: flex",
+    "align-items: center",
+    "gap: 12px",
+    "animation: __fps_pulse 1.6s ease-in-out infinite"
   ].join(";");
-  card.innerHTML = '<span style="margin-right:6px">📸</span><span id="__fullpage_shot_progress_text__">Capturing full page...</span>';
+  card.innerHTML = `
+    <span style="font-size: 26px; line-height: 1;">📸</span>
+    <span id="__fullpage_shot_progress_text__" style="flex:1">Capturing full page...</span>
+  `;
+
+  // pulse 动画
+  const style = document.createElement("style");
+  style.id = "__fullpage_shot_anim_style__";
+  style.textContent = `
+    @keyframes __fps_pulse {
+      0%, 100% { box-shadow: 0 12px 48px rgba(0,0,0,0.55), 0 0 0 4px rgba(88,166,255,0.15); }
+      50%      { box-shadow: 0 12px 48px rgba(0,0,0,0.55), 0 0 0 12px rgba(88,166,255,0.05); }
+    }
+  `;
+  document.head.appendChild(style);
+
   root.appendChild(barWrap);
   root.appendChild(card);
   document.documentElement.appendChild(root);
-  window[KEY] = { root };
+  window[KEY] = { root, styleEl: style };
 }
 
 function updateProgressUI(args) {
@@ -394,6 +422,7 @@ function removeProgressUI() {
   const KEY = "__fullpageShotProgressUI__";
   if (!window[KEY]) return;
   try { window[KEY].root.remove(); } catch (_) {}
+  try { if (window[KEY].styleEl) window[KEY].styleEl.remove(); } catch (_) {}
   delete window[KEY];
 }
 
