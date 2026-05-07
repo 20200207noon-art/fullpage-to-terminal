@@ -917,11 +917,11 @@ async function scrollStitch(tab, opts) {
     }
   }
 
-  // ── sticky overlay paste 已停用 ──
-  // 这部分代码本质上是"掩盖"：用 first frame 的 sticky 元素贴回截图覆盖中段重复。
-  // 但它无法真正解决 share 按钮 / input bar 等"非 CSS-fixed 但视觉固定"元素的问题，
-  // 反而可能在拼接中造成视觉错位假象。用户决定接受原始重复，不做掩盖。
-  if (false && firstFrameDataUrl && stickyOverlays.length > 0) {
+  // ── 贴 CSS fixed/sticky 元素的 overlay（sidebar / 顶部 nav 等）──
+  // 这些是 detect 阶段被 visibility:hidden 隐藏的，所以拼接 canvas 上对应区域是空白；
+  // 用 first frame 的对应区域贴回去，让 sidebar / nav 在长截图里显示一次
+  // 不处理 share 按钮 / input bar 这种 CSS 不是 fixed 的元素（detect 抓不到 ⇒ 不在 overlay 列表）
+  if (firstFrameDataUrl && stickyOverlays.length > 0) {
     try {
       const ffBlob = await (await fetch(firstFrameDataUrl)).blob();
       const ffBmp = await createImageBitmap(ffBlob);
