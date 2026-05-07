@@ -1,18 +1,18 @@
 // background.js — service worker（type: module）
 //
-// v2 修复要点：
-//   1. 截图前先用 chrome.scripting 注入"全页面预滚动"，强制触发懒加载内容渲染
-//   2. 用 Page.captureScreenshot + captureBeyondViewport: true 截整页
-//   3. >16000 px 的页面分段截，再用 OffscreenCanvas 拼接
-//      Chromium 2D canvas 上限 16384，超过部分目前会截断并在 viewer 标记
-//   4. PNG 存 chrome.storage.local（unlimitedStorage）
-//   5. offscreen 播放 shutter.wav
-//   6. 打开 viewer.html 让用户在那点按钮把 PNG 写进剪贴板
+// Key fixes since v2:
+//   1. Inject pre-scroll into the page to trigger lazy-loaded content before capture
+//   2. Use Page.captureScreenshot with captureBeyondViewport for full-page output
+//   3. Pages taller than 16000 px are split and stitched via OffscreenCanvas
+//      Chromium 2D canvas hard limit is 16384; overflow is truncated and flagged in viewer
+//   4. PNG stored in chrome.storage.local (unlimitedStorage)
+//   5. Offscreen document plays shutter.wav
+//   6. Open viewer.html — user click triggers clipboard write
 
 const MAX_SLICE_HEIGHT = 16000;
-const MAX_FINAL_HEIGHT = 16384; // OffscreenCanvas 单画布高度上限
+const MAX_FINAL_HEIGHT = 16384; // OffscreenCanvas single-canvas height limit
 
-// 全局日志缓冲区，每次 capture 开始时清空。同时输出 console + 存进 buffer 给 viewer 显示
+// Global log buffer, cleared at the start of each capture. Logs go to console + this buffer for viewer to show.
 let currentCaptureLogs = [];
 function fpsLog(...args) {
   const line = "[fullpage-shot] " + args.map(a =>
@@ -53,7 +53,7 @@ chrome.commands.onCommand.addListener((command) => {
 });
 
 async function capture(tab) {
-  // 每次 capture 重置日志缓冲
+  // reset log buffer for each capture
   currentCaptureLogs = [];
   fpsLog("capture started, tab.url=", tab && tab.url);
   if (!tab || !tab.id) throw new Error("No active tab. Click a normal web page first, then press the hotkey.");
@@ -67,7 +67,7 @@ async function capture(tab) {
     throw new Error("Active tab has no URL — wait for the page to finish loading, then try again.");
   }
 
-  // 0.5 装进度 UI（让用户看到"扩展正在工作"，页面滚动是预期的）
+  // 0.5 install progress UI so user sees the extension is working; page scroll is expected
   try {
     await chrome.scripting.executeScript({
       target: { tabId: tab.id, allFrames: false },
@@ -80,26 +80,26 @@ async function capture(tab) {
     });
   } catch (_) {}
 
-  // 1. 注入预滚动脚本，触发懒加载（很多瀑布流/Reddit/Twitter 不滚到底就不渲染）
+  // 1. inject pre-scroll script to trigger lazy load (many feeds like Reddit/Twitter need scroll to render)
   try {
     await chrome.scripting.executeScript({
       target: { tabId: tab.id, allFrames: false },
       func: preloadAllContent
     });
   } catch (e) {
-    console.warn("[fullpage-shot] 预滚动失败（可能页面有 CSP 或不允许注入）:", e.message);
+    console.warn("[fullpage-shot] pre-scroll failed (page may have CSP or block injection):", e.message);
   }
 
-  // 2. 等一拍让懒加载图片解码、布局稳定
+  // 2. wait briefly for lazy-loaded images to decode and layout to settle
   await sleep(300);
 
-  // 2.5 拍 first frame（hide 之前的原始视口）+ 检测 sidebar/sticky 元素位置
-  //     拼接结束时把这些元素从 first frame 抠出来贴回拼接图，模拟"始终静止在那"的视觉
+  // 2.5 take first frame (original viewport before hide) + detect sidebar/sticky element positions
+  //     after stitching, paste these from first frame back onto the canvas to mimic "stayed in place" visuals
   let firstFrameDataUrl = null;
   let stickyOverlays = [];
   let pageBgColor = null;
   try {
-    // 截 first frame 前先隐藏进度 UI
+    // hide progress UI before capturing first frame
     try {
       await chrome.scripting.executeScript({
         target: { tabId: tab.id, allFrames: false },
@@ -109,7 +109,7 @@ async function capture(tab) {
     } catch (_) {}
     await sleep(30);
     firstFrameDataUrl = await captureWithDebugger(tab.id);
-    // 截完恢复
+    // restore after capture
     try {
       await chrome.scripting.executeScript({
         target: { tabId: tab.id, allFrames: false },
@@ -120,14 +120,14 @@ async function capture(tab) {
     const detected = await execInPage(tab.id, detectStickyAndFixedRects);
     if (Array.isArray(detected)) stickyOverlays = detected;
     fpsLog("first frame captured, sticky overlays:", stickyOverlays.length);
-    // 拿页面真实背景色，避免深色页面最后留白边
+    // get page's real background color to avoid white edge on dark pages
     pageBgColor = await execInPage(tab.id, getPageBackgroundColor);
     if (pageBgColor) fpsLog("page bg color:", pageBgColor);
   } catch (e) {
     console.warn("[fullpage-shot] first frame / overlay detection failed:", e.message);
   }
 
-  // 3. 注入"消固定"：彻底 display:none 所有 fixed/sticky，避免拼接重复
+  // 3. inject "neutralize": display:none all fixed/sticky elements to avoid stitched repeats
   let neutralized = false;
   try {
     await chrome.scripting.executeScript({
@@ -136,7 +136,7 @@ async function capture(tab) {
     });
     neutralized = true;
   } catch (e) {
-    console.warn("[fullpage-shot] 注入消固定样式失败:", e.message);
+    console.warn("[fullpage-shot] failed to inject neutralize styles:", e.message);
   }
   await sleep(120);
 
@@ -152,7 +152,7 @@ async function capture(tab) {
     heightPx = result.height;
     truncated = result.truncated;
   } finally {
-    // 5. 截图完成或失败都要还原页面样式 + 移除进度 UI
+    // 5. restore page styles and remove progress UI on capture success or failure
     if (neutralized) {
       try {
         await chrome.scripting.executeScript({
@@ -179,20 +179,20 @@ async function capture(tab) {
     truncatedAt: truncated ? MAX_FINAL_HEIGHT : null
   };
 
-  // 落盘 → 把绝对路径塞进 meta，让 viewer 把 @path 写进剪贴板
-  // 这是"粘进 Mac 终端"唯一能 work 的路径：图片字节 ⌘V 进 Terminal.app 永远是空
+  // save to disk → put absolute path into meta so viewer can write @path to clipboard
+  // this is the only path that works for pasting into Mac Terminal: image bytes ⌘V into Terminal.app always pastes empty
   let savedPath = null;
   let saveError = null;
   try {
     savedPath = await saveToDownloads(dataUrl, tab.url);
   } catch (e) {
-    console.warn("[fullpage-shot] 落盘失败:", e);
+    console.warn("[fullpage-shot] save-to-disk failed:", e);
     saveError = (e && e.message) || String(e);
   }
   meta.savedPath = savedPath;
   meta.saveError = saveError;
 
-  // 收集 inject 函数里的日志（跑在目标 tab 的）合并到 background 自己的日志
+  // collect inject-function logs (running in target tab) and merge with background logs
   try {
     const injectLogsResult = await chrome.scripting.executeScript({
       target: { tabId: tab.id, allFrames: false },
@@ -212,7 +212,7 @@ async function capture(tab) {
   meta.logs = currentCaptureLogs.slice();
   await chrome.storage.local.set({ lastShot: { dataUrl, meta } });
 
-  // 进度推到 100% — viewer 即将打开
+  // push progress to 100% — viewer about to open
   try {
     await chrome.scripting.executeScript({
       target: { tabId: tab.id, allFrames: false },
@@ -221,11 +221,11 @@ async function capture(tab) {
     });
   } catch (_) {}
 
-  playShutter().catch((e) => console.warn("[fullpage-shot] 播放音效失败:", e));
+  playShutter().catch((e) => console.warn("[fullpage-shot] shutter audio play failed:", e));
 
-  // 关键：把图片作为「文件引用」写到剪贴板（等价于 Finder ⌘C 那个文件）
-  // Web Clipboard API 写不了文件引用类型，必须通过 Native Messaging 调本地 osascript
-  // 装好 native host 后，Claude Code TUI ⌘V 直接 attach 图片
+  // key: write image to clipboard as "file reference" (equivalent to Finder ⌘C on the file)
+  // Web Clipboard API can't write file-reference type; must call local osascript via Native Messaging
+  // with native host installed, Claude Code TUI ⌘V auto-attaches the image
   if (savedPath) {
     try {
       const resp = await chrome.runtime.sendNativeMessage(
@@ -243,17 +243,17 @@ async function capture(tab) {
     } catch (e) {
       meta.clipboardMode = "no-native-host";
       meta.clipboardError = e.message || String(e);
-      console.warn("[fullpage-shot] native host 不可用（没装？）:", e.message);
+      console.warn("[fullpage-shot] native host unavailable (not installed?):", e.message);
     }
-    // 写完最新的 meta（带 clipboardMode）
+    // write latest meta including clipboardMode
     await chrome.storage.local.set({ lastShot: { dataUrl, meta } });
   }
 
   await chrome.tabs.create({ url: chrome.runtime.getURL("viewer.html"), active: true });
 }
 
-// 把 URL 提取成文件名安全的 host 串：超过 40 字符就保留尾部（域名常在右侧最能认人），
-// 并跳到下一个 `.` 后面避免开头是半截 subdomain
+// Extract a filename-safe host string from URL: keep tail when > 40 chars (rightmost part is most recognizable)
+// skip past next "." to avoid starting with a partial subdomain
 function safeHost(rawUrl) {
   let host;
   try {
@@ -271,14 +271,14 @@ function safeHost(rawUrl) {
 }
 
 async function saveToDownloads(dataUrl, sourceUrl) {
-  // 命名格式：fullpage-{host}-{YYYY-MM-DD}T{HH-MM-SS}.png（用户指定）
-  // 本地时区，时间用 T 分隔，HMS 用 dash。
+  // filename format: fullpage-{host}-{YYYY-MM-DD}T{HH-MM-SS}.png (user-specified)
+  // local timezone, T separator, HMS with dashes
   const d = new Date();
   const pad = (n) => String(n).padStart(2, "0");
   const date = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
   const time = `${pad(d.getHours())}-${pad(d.getMinutes())}-${pad(d.getSeconds())}`;
   const host = safeHost(sourceUrl);
-  // 直接落到 Downloads 根目录，不进子文件夹（用户反馈"路径太深"）
+  // save directly to Downloads root, no subfolder (user feedback: "path too deep")
   const filename = `fullpage-${host}-${date}-${time}.png`;
 
   const downloadId = await new Promise((resolve, reject) => {
@@ -293,7 +293,7 @@ async function saveToDownloads(dataUrl, sourceUrl) {
     );
   });
 
-  // 等下载完成，拿绝对路径
+  // wait for download completion to get absolute path
   const filePath = await new Promise((resolve, reject) => {
     const onChange = (delta) => {
       if (delta.id !== downloadId) return;
@@ -303,26 +303,26 @@ async function saveToDownloads(dataUrl, sourceUrl) {
           if (items && items[0] && items[0].filename) {
             resolve(items[0].filename);
           } else {
-            reject(new Error("找不到下载记录"));
+            reject(new Error("download record not found"));
           }
         });
       } else if (delta.error && delta.error.current) {
         chrome.downloads.onChanged.removeListener(onChange);
-        reject(new Error("下载错误：" + delta.error.current));
+        reject(new Error("download error: " + delta.error.current));
       }
     };
     chrome.downloads.onChanged.addListener(onChange);
     setTimeout(() => {
       chrome.downloads.onChanged.removeListener(onChange);
-      reject(new Error("下载超时（30s）"));
+      reject(new Error("download timeout (30s)"));
     }, 30000);
   });
 
   return filePath;
 }
 
-// 注入到目标 tab：装一个浮动进度 UI（顶部细线 + 中央卡片）。
-// 让用户看到"扩展正在截图，页面滚动是预期的"，不是页面 bug。
+// Inject into target tab: install a floating progress UI (top bar + center card).
+// so user sees "extension is capturing, scrolling is expected" — not page bug
 function installProgressUI() {
   const KEY = "__fullpageShotProgressUI__";
   if (window[KEY]) return;
@@ -338,7 +338,7 @@ function installProgressUI() {
     "font-family: -apple-system, BlinkMacSystemFont, sans-serif"
   ].join(";");
 
-  // 顶部彩色细线进度条（4px，更明显）
+  // colorful 4px progress bar at top (more visible)
   const barWrap = document.createElement("div");
   barWrap.style.cssText = [
     "position: absolute", "top: 0", "left: 0", "right: 0",
@@ -354,7 +354,7 @@ function installProgressUI() {
   ].join(";");
   barWrap.appendChild(bar);
 
-  // 右下角大卡片（不挡顶部主内容，醒目）
+  // large card in bottom-right (does not block top content, eye-catching)
   const card = document.createElement("div");
   card.id = "__fullpage_shot_progress_card__";
   card.style.cssText = [
@@ -381,7 +381,7 @@ function installProgressUI() {
     <span id="__fullpage_shot_progress_text__" style="flex:1">Capturing full page...</span>
   `;
 
-  // pulse 动画
+  // pulse animation
   const style = document.createElement("style");
   style.id = "__fullpage_shot_anim_style__";
   style.textContent = `
@@ -423,7 +423,7 @@ function removeProgressUI() {
   delete window[KEY];
 }
 
-// 注入到目标 tab：拿页面真实背景色（用于 canvas 填充，避免深色页面留白边）
+// Inject into target tab: get page's real background color (for canvas fill, avoid white edge on dark pages)
 function getPageBackgroundColor() {
   const candidates = [document.body, document.documentElement];
   for (const el of document.querySelectorAll("main, [role='main'], #app, #root")) {
@@ -442,10 +442,10 @@ function getPageBackgroundColor() {
   return "#ffffff";
 }
 
-// 注入到目标 tab：检测所有 CSS position: fixed/sticky 元素，返回它们的视口 rect。
-// 简化版：纯 CSS 检测，不做 scroll-then-measure（那会触发 React re-render 破坏页面）。
-// 漏掉的"视觉固定但 CSS 不是 fixed"的元素（如 Share 按钮）暂时接受重复出现，
-// 优先级 < 截整页的能力。
+// Inject into target tab: detect all CSS position:fixed/sticky elements, return their viewport rects.
+// Simple version: pure CSS detection, no scroll-then-measure (that triggers React re-render and breaks the page).
+// Visually-fixed-but-CSS-not-fixed elements (e.g. share button) are accepted as repeating in the stitched output for now —
+// lower priority than the core full-page-capture ability.
 function detectStickyAndFixedRects() {
   const VW = window.innerWidth;
   const VH = window.innerHeight;
@@ -466,7 +466,7 @@ function detectStickyAndFixedRects() {
       area: Math.round(r.width * r.height)
     });
   }
-  // 去重：包含关系 → 只留外层
+  // Dedup: keep only outer when one rect contains another
   rects.sort((a, b) => b.area - a.area);
   const dedup = [];
   for (const r of rects) {
@@ -484,15 +484,15 @@ function detectStickyAndFixedRects() {
   return dedup;
 }
 
-// 注入到目标 tab：把所有 position:fixed / position:sticky 元素彻底**隐藏**（display:none）。
-// 之前用 absolute 不够 —— SPA 里 sidebar 仍然在视口内出现。
-// 直接 display:none 让它们彻底消失，截图就只有页面主内容，不会重复。
-// 截图完成后通过 restoreStickyAndFixed 还原。
+// Inject into target tab: fully hide all position:fixed/sticky elements (display:none).
+// Switching them to absolute was not enough — SPA sidebars still appeared in the viewport.
+// display:none makes them disappear entirely so the capture has only main content, no repeats.
+// restoreStickyAndFixed reverts after capture.
 function neutralizeStickyAndFixed() {
   const KEY = "__fullpageShotNeutralized__";
   if (window[KEY]) return;
   const restored = [];
-  // 1. 全局禁用动画/过渡
+  // 1. globally disable animations/transitions
   const styleEl = document.createElement("style");
   styleEl.id = "__fullpage_shot_anim_off__";
   styleEl.textContent =
@@ -500,9 +500,9 @@ function neutralizeStickyAndFixed() {
     "transition-duration:0s !important;transition-delay:0s !important;}";
   (document.head || document.documentElement).appendChild(styleEl);
 
-  // 2. 遍历所有元素，找 CSS fixed/sticky → display:none
-  // （detect 阶段已经直接 hide 了 visually-stuck 元素，这里只处理 detect 漏掉的 CSS 级 fixed/sticky）
-  // ⚠️ 跳过 data-fullpage-shot=ui 标记的元素（我们自己的进度 UI 等）
+  // 2. Walk all elements, find CSS fixed/sticky → display:none
+  // (detect step already hid visually-stuck elements; this handles only CSS-level fixed/sticky missed by detect)
+  // ⚠️ skip elements tagged data-fullpage-shot=ui (our own progress UI)
   const all = document.querySelectorAll("*");
   let hiddenCount = 0;
   for (const el of all) {
@@ -517,8 +517,8 @@ function neutralizeStickyAndFixed() {
         prevDisplay: el.style.display,
         prevVisibility: el.style.visibility
       });
-      // 用 visibility:hidden 而不是 display:none —— 保留布局空间，
-      // main 不会因为 sidebar 消失而扩展到 viewport 左侧（避免后续段"内容左偏"）
+      // use visibility:hidden instead of display:none — preserves layout space,
+      // so main does not expand to viewport-left when sidebar disappears (avoids subsequent slices' content-shift-left)
       el.style.setProperty("visibility", "hidden", "important");
       hiddenCount++;
     }
@@ -528,7 +528,7 @@ function neutralizeStickyAndFixed() {
   if (!window.__fpsInjectLogs) window.__fpsInjectLogs = [];
   window.__fpsInjectLogs.push(_hideLog);
 
-  // 3. body/html overflow:hidden 解掉
+  // 3. unset body/html overflow:hidden
   const htmlEl = document.documentElement;
   const bodyEl = document.body;
   const htmlPrevOverflow = htmlEl ? htmlEl.style.overflow : "";
@@ -566,7 +566,7 @@ function restoreStickyAndFixed() {
   delete window[KEY];
 }
 
-// 注入到目标 tab：滚到底再回顶，强制懒加载渲染。返回观察到的最大 scrollHeight。
+// Inject into target tab: scroll to bottom then back to top to force lazy-load rendering. Returns observed max scrollHeight.
 function preloadAllContent() {
   return new Promise((resolve) => {
     const originalY = window.scrollY;
@@ -592,7 +592,7 @@ function preloadAllContent() {
 
     const finish = () => {
       window.scrollTo(0, 0);
-      // 给浏览器一个 frame 让 sticky-header 之类回到正常状态
+      // give browser one frame so sticky headers settle back to normal
       requestAnimationFrame(() => {
         setTimeout(
           () => resolve({ maxHeight: observedMax, originalY }),
@@ -625,20 +625,20 @@ function preloadAllContent() {
   });
 }
 
-// 自己驱动滚动 → 截每段可见视口 → 拼接到 OffscreenCanvas
-// 用 chrome.tabs.captureVisibleTab（不需要 debugger，没有"正在调试"横幅）
-// 关键升级：先识别"真正在滚的那个容器"（window 或某个内部 div）。
+// Drive scrolling ourselves → capture each visible-viewport slice → stitch into OffscreenCanvas
+// Uses chrome.debugger Page.captureScreenshot (yields physical-pixel sharp output, briefly shows debug banner)
+// Key behavior: first identify the actual scrolling container (window vs an inner div)
 async function scrollStitch(tab, opts) {
   const tabId = tab.id;
   const firstFrameDataUrl = opts && opts.firstFrameDataUrl;
   const stickyOverlays = (opts && opts.stickyOverlays) || [];
   const pageBgColor = (opts && opts.pageBgColor) || "#ffffff";
-  // 步骤 1：在页面上下文里找出"最大可滚动元素"和它的尺寸/DPR，
-  // 同时把它存到 window.__fpsHost，后续每一帧 scroll 都用同一个引用。
+  // Step 1: in page context, find the "largest scrollable element" with its size/DPR
+  // and store on window.__fpsHost so every later scroll uses the same reference
   const info = await execInPage(tabId, () => {
     const VW = window.innerWidth;
     const VH = window.innerHeight;
-    // 候选必须是"主内容区"——宽度 >= viewport 一半，否则就是 sidebar / aside / 抽屉
+    // candidate must be the main content area — width >= half viewport, otherwise it's a sidebar/aside/drawer
     const MIN_HOST_WIDTH = Math.max(400, VW * 0.5);
 
     const candidates = [];
@@ -652,11 +652,11 @@ async function scrollStitch(tab, opts) {
         const ch = el.clientHeight;
         const cw = el.clientWidth;
         if (sh - ch < 200) continue;
-        // 关键过滤：太窄的容器肯定不是主内容（typically sidebar 250-300px）
+        // key filter: containers too narrow are definitely not main content (typically sidebars are 250-300px)
         if (cw < MIN_HOST_WIDTH) continue;
-        // 排除被隐藏的元素
+        // exclude hidden elements
         if (cs.display === "none" || cs.visibility === "hidden") continue;
-        // 排除明显的 aside/nav 角色
+        // exclude obvious aside/nav roles
         const tag = el.tagName.toLowerCase();
         const role = el.getAttribute("role");
         if (tag === "aside" || tag === "nav") continue;
@@ -666,11 +666,11 @@ async function scrollStitch(tab, opts) {
         candidates.push({ el, area, sh, ch, cw, tag });
       } catch (_) {}
     }
-    // 按 area 排序选最大（1.13.3 试过宽度优先反而误选 html/body 之类宽但实际滚不动的元素，回退）
+    // Sort by area descending (v1.13.3 tried width-first but mistakenly picked html/body — wide but actually unscrollable — reverted)
     candidates.sort((a, b) => b.area - a.area);
     const bestEl = candidates[0] ? candidates[0].el : null;
 
-    // 调试日志
+    // debug logs
     if (!window.__fpsInjectLogs) window.__fpsInjectLogs = [];
     const _logs = ["inner candidates: " + candidates.length];
     candidates.slice(0, 5).forEach((c, i) => {
@@ -736,8 +736,8 @@ async function scrollStitch(tab, opts) {
   let h = Math.max(1, info.height);
   const vh = Math.max(100, info.viewportH);
   const dpr = info.dpr;
-  // canvas 是物理分辨率（×dpr），保留原始截图清晰度。
-  // 16384 是 OffscreenCanvas 单边硬上限（物理像素），所以 CSS 高度上限是 16384/dpr。
+  // canvas at physical resolution (×dpr) preserves capture sharpness.
+  // 16384 is the OffscreenCanvas hard limit (physical px), so CSS-height limit is 16384/dpr.
   let truncated = false;
   const maxCssHeight = Math.floor(MAX_FINAL_HEIGHT / dpr);
   if (h > maxCssHeight) {
@@ -745,7 +745,7 @@ async function scrollStitch(tab, opts) {
     truncated = true;
   }
 
-  // 保存原 scroll 位置（按 mode 选）
+  // save original scroll position (by mode)
   const origScrollY = await execInPage(tabId, () => {
     if (window.__fpsMode === "inner" && window.__fpsHost) {
       return window.__fpsHost.scrollTop || 0;
@@ -761,7 +761,7 @@ async function scrollStitch(tab, opts) {
 
   while (scrollY < h && safety < SAFETY_CAP) {
     safety++;
-    // 每段都重新滚 + 重新读 host 当前 rect（虚拟列表 re-render 后 rect 可能变）
+    // scroll for each slice + re-read host's current rect (virtual lists may re-render and change rect)
     const scrollResult = await execInPage(
       tabId,
       (yy) => {
@@ -770,7 +770,7 @@ async function scrollStitch(tab, opts) {
         if (window.__fpsMode === "inner" && window.__fpsHost) {
           window.__fpsHost.scrollTop = yy;
           actualY = window.__fpsHost.scrollTop || 0;
-          // 滚动后等一帧再读 rect（让浏览器布局更新）
+          // wait a frame after scroll before reading rect (let layout update)
           const rect = window.__fpsHost.getBoundingClientRect();
           rectLeft = Math.max(0, Math.round(rect.left));
           rectTop = Math.max(0, Math.round(rect.top));
@@ -786,8 +786,8 @@ async function scrollStitch(tab, opts) {
     );
     const actualYNum = (scrollResult && typeof scrollResult.actualY === "number") ? scrollResult.actualY : scrollY;
 
-    // 更新进度 UI（基于 scroll progress / 估算总段数）
-    // 实际段数考虑 OVERLAP=40 重叠：每段前进 (vh - 40) 而非整 vh，所以 +1 起始段
+    // update progress UI (based on scroll progress / estimated slice total)
+    // actual slice count accounts for OVERLAP=40 overlap: each slice advances (vh - 40), so +1 for the starting slice
     const stepPx = Math.max(80, vh - 40);
     const estimatedTotal = Math.max(1, Math.ceil((h - vh) / stepPx) + 1);
     const currentSegment = safety;
@@ -800,10 +800,10 @@ async function scrollStitch(tab, opts) {
       });
     } catch (_) {}
 
-    // 600ms：给虚拟列表渲染时间 + captureVisibleTab 配额限制（Chrome 每秒最多 2 次）
+    // 600ms: gives virtual lists time to render + captureVisibleTab quota (Chrome allows max 2/sec)
     await sleep(600);
 
-    // 截图前临时隐藏进度 UI，避免它出现在截图里
+    // temporarily hide progress UI before capture so it does not appear in the screenshot
     try {
       await chrome.scripting.executeScript({
         target: { tabId, allFrames: false },
@@ -811,14 +811,14 @@ async function scrollStitch(tab, opts) {
         args: [false]
       });
     } catch (_) {}
-    // 短等让浏览器实际重绘
+    // short wait so browser actually repaints
     await sleep(30);
 
-    // 用 chrome.debugger Page.captureScreenshot 强制高清（2× Retina）
-    // 代价：顶部"正在调试此浏览器"横幅几秒，但能换来真正的物理像素分辨率
+    // Use chrome.debugger Page.captureScreenshot for forced sharpness (2× on Retina)
+    // cost: short "is debugging this browser" banner, in exchange for true physical-pixel resolution
     const visDataUrl = await captureWithDebugger(tab.id);
 
-    // 截完恢复 UI
+    // restore after capture UI
     try {
       await chrome.scripting.executeScript({
         target: { tabId, allFrames: false },
@@ -826,7 +826,7 @@ async function scrollStitch(tab, opts) {
         args: [true]
       });
     } catch (_) {}
-    // 每段记下当时的 rect（inner mode 用），不再依赖初始 info.rectLeft/rectTop
+    // record each slice's rect at capture time (used by inner mode); no longer rely on initial info.rectLeft/rectTop
     slices.push({
       y: actualYNum,
       dataUrl: visDataUrl,
@@ -834,14 +834,14 @@ async function scrollStitch(tab, opts) {
       rectTop: scrollResult ? scrollResult.rectTop : 0
     });
 
-    if (actualYNum === lastActualY) break; // 已到底
+    if (actualYNum === lastActualY) break; // reached the bottom
     lastActualY = actualYNum;
-    // 下一段往前留 40px 重叠
+    // leave 40px overlap with the next slice
     const OVERLAP = 40;
     scrollY = actualYNum + Math.max(80, vh - OVERLAP);
   }
 
-  // 恢复原 scroll
+  // restore original scroll
   await execInPage(
     tabId,
     (yy) => {
@@ -854,14 +854,14 @@ async function scrollStitch(tab, opts) {
     [origScrollY || 0]
   ).catch(() => {});
 
-  // ── 关键修复：从实际 bmp 像素反推真实 dpr，不信 window.devicePixelRatio ──
-  // 不少配置下（外接 5K 显示器走低分辨率、用户自定义 zoom 等）devicePixelRatio
-  // 报告的值不是 captureVisibleTab 实际输出的物理像素倍率。
-  // 我们先解码第一段截图，从 bmp.width / viewportCSS 算真实倍率，再据此建 canvas。
+  // ── Key fix: derive real dpr from actual bitmap pixel size, do not trust window.devicePixelRatio ──
+  // In many setups (external 5K at low resolution, custom zoom, etc.) devicePixelRatio
+  // may not match the captureVisibleTab actual output's physical-pixel ratio.
+  // We decode the first slice and compute real ratio = bmp.width / viewportCSS, then size the canvas accordingly.
   const isInner = info.mode === "inner";
   const baseCanvasW_css = isInner ? (info.viewportW || w) : w;
 
-  // 预解码所有段（顺便从第一段算 realDpr）
+  // predecode all slices (computing realDpr from the first one)
   const decodedSlices = [];
   let realDpr = dpr;
   for (let i = 0; i < slices.length; i++) {
@@ -871,7 +871,7 @@ async function scrollStitch(tab, opts) {
     if (i === 0) {
       const cssVW = info.viewportW || (info.windowVH ? Math.round(bmp.width / dpr) : bmp.width);
       const measured = bmp.width / cssVW;
-      // 不要用奇怪的小数；只接受 1, 1.25, 1.5, 2, 2.5, 3
+      // snap to standard ratios: 1, 1.25, 1.5, 2, 2.5, 3
       const allowed = [1, 1.25, 1.5, 2, 2.5, 3];
       let best = dpr;
       let bestDelta = Infinity;
@@ -889,16 +889,16 @@ async function scrollStitch(tab, opts) {
   const canvasH = Math.round(h * realDpr);
   const canvas = new OffscreenCanvas(canvasW, canvasH);
   const ctx = canvas.getContext("2d");
-  if (!ctx) throw new Error("无法创建 OffscreenCanvas 2D context");
-  // 关键：禁用插值 —— src 和 dst 同尺寸时不应有任何重采样
+  if (!ctx) throw new Error("Cannot create OffscreenCanvas 2D context");
+  // Key: disable smoothing — no resampling when src and dst sizes match
   ctx.imageSmoothingEnabled = false;
-  // 用页面真实背景色填充（深色页面避免白边）
+  // fill canvas with the page's real background color (avoids white edges on dark pages)
   ctx.fillStyle = pageBgColor;
   ctx.fillRect(0, 0, canvasW, canvasH);
 
   const mainWidthPx = Math.round(w * realDpr);
 
-  // 主拼接 —— **不要在循环里 close bmp**，row-hash diff 之后统一 close
+  // main stitch — DO NOT close bmp inside the loop; close all after diff step
   for (const s of decodedSlices) {
     const bmp = s.bmp;
     const drawH = Math.min(vh, h - s.y);
@@ -917,18 +917,18 @@ async function scrollStitch(tab, opts) {
     }
   }
 
-  // ── 贴 CSS fixed/sticky 元素的 overlay（sidebar / 顶部 nav 等）──
-  // 这些是 detect 阶段被 visibility:hidden 隐藏的，所以拼接 canvas 上对应区域是空白；
-  // 用 first frame 的对应区域贴回去，让 sidebar / nav 在长截图里显示一次
-  // 不处理 share 按钮 / input bar 这种 CSS 不是 fixed 的元素（detect 抓不到 ⇒ 不在 overlay 列表）
+  // ── Paste overlay for CSS fixed/sticky elements (sidebar / top nav etc)──
+  // These were hidden via visibility:hidden during detect, so the stitched canvas has empty regions in their place;
+  // paste them back from the first frame so the sidebar/nav appears once in the long screenshot
+  // Does not affect share button / input bar (CSS-not-fixed → not in stickyOverlays list anyway)
   if (firstFrameDataUrl && stickyOverlays.length > 0) {
     try {
       const ffBlob = await (await fetch(firstFrameDataUrl)).blob();
       const ffBmp = await createImageBitmap(ffBlob);
-      const VPH = info.windowVH || info.viewportH;  // viewport 物理高度（CSS px）
-      // "真正贴底的 bar" 才算底部。规则：
-      //   底部边缘距 viewport 底 < 20% viewport 高（自适应，约 150-200px on 839px viewport）
-      //   AND 元素高度 < viewport 一半（排除占满高的 sidebar）
+      const VPH = info.windowVH || info.viewportH;  // viewport physical height (CSS px)
+      // Only a "truly bottom-pinned bar" counts as bottom. Rule:
+      //   bottom edge within 20% of viewport height (adaptive, ~150-200px on 839px viewport)
+      //   AND element height < half viewport (excludes full-height sidebars)
       const BOTTOM_GAP_THRESHOLD = Math.max(80, VPH * 0.2);
       const HEIGHT_RATIO_MAX = 0.5;
       let topCount = 0, bottomCount = 0;
@@ -943,11 +943,11 @@ async function scrollStitch(tab, opts) {
         const isBottom = distFromBottom < BOTTOM_GAP_THRESHOLD && isSmallBar;
         let dy;
         if (isBottom) {
-          // 贴 canvas 最底部，保留原距底 gap
+          // paste at canvas bottom, preserving original gap-from-bottom
           dy = canvasH - sh - Math.round(distFromBottom * realDpr);
           bottomCount++;
         } else {
-          // 默认贴原位置（顶部 + sidebar 都走这里）
+          // default: paste at original position (top fixed + sidebar both fall here)
           dy = Math.round(ov.top * realDpr);
           topCount++;
         }
@@ -960,12 +960,12 @@ async function scrollStitch(tab, opts) {
     }
   }
 
-  // ── post-capture pixel diff 已尝试 4 次（row/cell/band/per-pixel），都引入新 bug ──
-  // Claude.ai 半透明 input bar 像素跨段差异 > fuzzy 阈值，强行覆盖会破坏 main 内容
-  // 接受现状：CSS-fixed/sticky overlay 处理 + 视觉固定但 CSS 不是 fixed 的元素会重复
+  // ── post-capture pixel diff has been tried 4 times (row/cell/band/per-pixel); each introduced new bugs ──
+  // Claude.ai semi-transparent input bar's per-pixel cross-slice diff exceeds fuzzy tolerance; forced overlay damages main content
+  // Accept current behavior: CSS-fixed/sticky get overlay; CSS-not-fixed-but-visually-pinned elements will repeat
   if (false && decodedSlices.length >= 2) {
     try {
-      // 取所有段的 ImageData
+      // take ImageData of every slice
       const sliceImageData = [];
       for (const s of decodedSlices) {
         const tmp = new OffscreenCanvas(s.bmp.width, s.bmp.height);
@@ -979,7 +979,7 @@ async function scrollStitch(tab, opts) {
       const BOTTOM_BAND = Math.min(Math.round(H * 0.22), 200);
       const BOTTOM_START = H - BOTTOM_BAND;
 
-      // 在底部条带逐**像素**找"所有段都几乎相同"的像素 — fuzzy 匹配（RGB ±10 容忍抗锯齿）
+      // In the bottom band, per-pixel find pixels nearly identical across all slices — fuzzy match (RGB ±10 tolerates anti-aliasing)
       const bottomMask = new Uint8Array(W * BOTTOM_BAND);
       let fixedPxCount = 0;
       const data0 = sliceImageData[0].data;
@@ -1007,19 +1007,19 @@ async function scrollStitch(tab, opts) {
       const totalBottomPx = W * BOTTOM_BAND;
       fpsLog(`bottom-px-diff: ${fixedPxCount}/${totalBottomPx} pixels visually fixed (${(fixedPxCount/totalBottomPx*100).toFixed(1)}%, fuzzy ±${TOL})`);
 
-      // 应用：
-      //   1. 中段（所有 slice 自然位置）的 fixed 像素 → 用 page bg color **清空**
-      //      （不能用 slice[0]，因为 slice[0] 那位置也是 input bar，覆盖等于没覆盖）
-      //   2. Canvas 最底部 → 用 slice[0] 的 fixed 像素**贴上**（最终 input bar）
+      // apply:
+      //   1. Mid-section fixed pixels (each slice's natural position) → CLEAR with page bg color
+      //      (can't use slice[0] — slice[0] there is also the input bar, so 'overlay' would be a no-op)
+      //   2. At canvas bottom → PASTE slice[0]'s fixed pixels (final input bar)
       if (fixedPxCount > 0 && fixedPxCount < totalBottomPx * 0.95) {
-        // 解析 page bg color
+        // parse page bg color
         let bgR = 30, bgG = 30, bgB = 30;
         const m = pageBgColor.match(/(\d+)\s*,\s*(\d+)\s*,\s*(\d+)/);
         if (m) { bgR = +m[1]; bgG = +m[2]; bgB = +m[3]; }
 
-        // overlay A: fixed 像素 = bg color（用于中段清空）
+        // overlay A: fixed pixels = bg color (for clearing mid-sections)
         const clearData = new Uint8ClampedArray(W * BOTTOM_BAND * 4);
-        // overlay B: fixed 像素 = slice[0] 像素（用于 canvas 最底贴）
+        // overlay B: fixed pixels = slice[0] pixels (for canvas-bottom paste)
         const finalData = new Uint8ClampedArray(W * BOTTOM_BAND * 4);
         for (let by = 0; by < BOTTOM_BAND; by++) {
           const y = BOTTOM_START + by;
@@ -1044,7 +1044,7 @@ async function scrollStitch(tab, opts) {
         const finalCanvas = new OffscreenCanvas(W, BOTTOM_BAND);
         finalCanvas.getContext("2d").putImageData(new ImageData(finalData, W, BOTTOM_BAND), 0, 0);
 
-        // 步骤 1：所有段的底部 fixed 像素位置清空（含 slice[0] 自然位置）
+        // Step 1: clear bottom fixed-pixel positions for every slice (including slice[0]'s natural position)
         for (let i = 0; i < decodedSlices.length; i++) {
           const s = decodedSlices[i];
           const drawH = Math.min(vh, h - s.y);
@@ -1054,7 +1054,7 @@ async function scrollStitch(tab, opts) {
             ctx.drawImage(clearCanvas, 0, 0, W, BOTTOM_BAND, 0, dstY, W, BOTTOM_BAND);
           }
         }
-        // 步骤 2：canvas 最底贴 slice[0] 的 input bar
+        // Step 2: paste slice[0]'s input bar at canvas bottom
         const finalDstY = canvasH - BOTTOM_BAND;
         ctx.drawImage(finalCanvas, 0, 0, W, BOTTOM_BAND, 0, finalDstY, W, BOTTOM_BAND);
 
@@ -1068,7 +1068,7 @@ async function scrollStitch(tab, opts) {
     }
   }
 
-  // 统一 close 所有 bmp（row-hash diff 之后）
+  // close all bmps (after row/cell/band/pixel diff is done)
   for (const s of decodedSlices) {
     try { s.bmp.close(); } catch (_) {}
   }
@@ -1078,9 +1078,9 @@ async function scrollStitch(tab, opts) {
   return { dataUrl, width: w, height: info.height, truncated };
 }
 
-// chrome.scripting.executeScript 包装：在页面上下文里跑函数，返回结果
-// 用 chrome.debugger 截图（高清版）：先 attach + 强制 deviceScaleFactor 提高分辨率
-// 代价：会触发顶部"正在调试此浏览器"横幅几秒
+// chrome.scripting.executeScript wrapper: runs the function in page context and returns the result
+// Capture via chrome.debugger (high-res): attach first + force deviceScaleFactor for higher resolution
+// Cost: shows "is debugging this browser" banner at top for a few seconds
 async function captureWithDebugger(tabId) {
   const target = { tabId };
   let attached = false;
@@ -1093,8 +1093,8 @@ async function captureWithDebugger(tabId) {
       });
     });
     attached = true;
-    // captureBeyondViewport: false → 只截当前视口
-    // fromSurface: true → 直接从 GPU surface 拿，更快更清晰
+    // captureBeyondViewport: false → only the current viewport
+    // fromSurface: true → grab directly from GPU surface, faster and sharper
     const result = await new Promise((resolve, reject) => {
       chrome.debugger.sendCommand(
         target,
@@ -1127,7 +1127,7 @@ async function execInPage(tabId, func, args) {
     });
     return r && r[0] ? r[0].result : null;
   } catch (e) {
-    console.warn("[fullpage-shot] execInPage 失败:", e.message);
+    console.warn("[fullpage-shot] execInPage failed:", e.message);
     return null;
   }
 }
@@ -1151,7 +1151,7 @@ async function ensureOffscreen() {
   await chrome.offscreen.createDocument({
     url: "offscreen.html",
     reasons: ["AUDIO_PLAYBACK"],
-    justification: "播放相机咔嚓声"
+    justification: "Play camera shutter sound"
   });
 }
 
@@ -1164,7 +1164,7 @@ async function reportError(tab, err) {
   console.error("[fullpage-shot]", err);
   const msg = (err && err.message) || String(err);
   const fullMsg = tab && tab.url ? `${msg}\n\n📍 Tried to capture: ${tab.url}` : msg;
-  // 出错也带上日志，方便诊断
+  // Include logs on errors too for easier diagnosis
   let logs = currentCaptureLogs.slice();
   try {
     const r = await chrome.scripting.executeScript({

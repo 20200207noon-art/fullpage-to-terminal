@@ -1,4 +1,4 @@
-// viewer.js v13 — 极简，一句话讲清楚
+// viewer.js — minimal "Image copied" success view
 
 const t = (key, ...subs) => chrome.i18n.getMessage(key, subs.length ? subs : undefined) || "";
 
@@ -58,7 +58,7 @@ function setBannerError(title, sub) {
     }
     if (lastShot.error) {
       setBannerError("Capture failed", escapeHtml(lastShot.error));
-      // 失败也显示日志
+      // also show logs on failure
       if (lastShot.logs && lastShot.logs.length > 0) {
         const diagBox = document.getElementById("diagBox");
         const diagText = document.getElementById("diagText");
@@ -76,9 +76,9 @@ function setBannerError(title, sub) {
     imgWrap.style.display = "block";
     renderMeta(lastMeta);
 
-    // viewer 默认 actual-size（已通过 HTML class）— 永远 100% 清晰，无切换
+    // viewer defaults to actual-size (set via HTML class) — always 100% sharp, no toggle
 
-    // 显示诊断日志（如果有）
+    // show diagnostic logs if any
     if (lastMeta.logs && lastMeta.logs.length > 0) {
       const diagBox = document.getElementById("diagBox");
       const diagText = document.getElementById("diagText");
@@ -98,11 +98,11 @@ function setBannerError(title, sub) {
       return;
     }
 
-    // 显示文件落盘位置
+    // show on-disk path
     bannerSavedPath.textContent = lastMeta.savedPath;
     bannerSaved.style.display = "block";
 
-    // 主路径：native host 已经把图片文件引用写到剪贴板
+    // main path: native host already wrote a file reference to the clipboard
     if (lastMeta.clipboardMode === "file-ref") {
       copied = true;
       setBannerSuccess(
@@ -112,7 +112,7 @@ function setBannerError(title, sub) {
       return;
     }
 
-    // 兜底：没装 native host，给个按钮让用户点
+    // fallback: native host not installed → show a button user can click
     pathText = `@${lastMeta.savedPath}`;
     fallbackAction.style.display = "block";
     setBannerFallback(
@@ -181,7 +181,7 @@ function tryAutoCopy() {
         `Switch to <b>Claude Code</b>, press <kbd>⌘</kbd><kbd>V</kbd> then Enter`
       );
     })
-    .catch(() => { /* 静默 */ });
+    .catch(() => { /* silent */ });
 }
 
 function renderMeta(m) {

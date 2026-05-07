@@ -28,7 +28,7 @@
       .banner, .fallback-action, .footer, #errBox, #diagBox { flex: 0 0 auto; }
       .img-wrap { flex: 1 1 auto; overflow: auto; }
 
-      /* ── 大成功横幅：唯一的视觉重点 ───────────────────── */
+      /* ── Success banner — the only visual focal point ───── */
       .banner {
         background: linear-gradient(180deg, #1f3a25, #15291a);
         border-bottom: 2px solid var(--accent);
@@ -117,7 +117,7 @@
         color: rgba(255,255,255,0.7);
       }
 
-      /* 兜底状态：no-native-host 时变蓝（提示用户点按钮） */
+      /* Fallback state: turns blue when no native host (prompt to click button) */
       .banner.fallback {
         background: linear-gradient(180deg, #1c2842, #131a2b);
         border-bottom-color: #58a6ff;
@@ -125,7 +125,7 @@
       .banner.fallback .banner-headline { color: #c8d8ff; }
       .banner.fallback .banner-headline .check { color: #58a6ff; }
 
-      /* 失败状态：变红 */
+      /* Error state: red */
       .banner.err {
         background: linear-gradient(180deg, #3d1a1f, #2a1217);
         border-bottom-color: #6e2730;
@@ -187,7 +187,7 @@
         font-size: 13px;
       }
 
-      /* fallback 模式下显示的"复制"按钮 */
+      /* "Copy" button shown only in fallback mode */
       .fallback-action {
         text-align: center;
         padding: 0 24px 16px;
@@ -208,7 +208,7 @@
     </style>
   </head>
   <body>
-    <!-- 唯一的视觉重点：一句话告诉用户结果 -->
+    <!-- Single focal point: tell the user the outcome -->
     <div class="banner" id="banner">
       <span class="banner-hotkey">⌨ <kbd>⌥</kbd>+<kbd>A</kbd></span>
       <button class="banner-saveas" id="downloadBtn" type="button" data-i18n="btnSaveAs">⬇ Save as</button>
@@ -223,7 +223,7 @@
       </p>
     </div>
 
-    <!-- fallback 模式才显示的复制按钮 -->
+    <!-- Copy button shown only in fallback mode -->
     <div class="fallback-action" id="fallbackAction" style="display:none;">
       <button id="copyBtn" type="button">📋 Click to copy path</button>
     </div>
