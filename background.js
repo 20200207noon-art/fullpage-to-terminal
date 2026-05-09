@@ -898,13 +898,12 @@ async function scrollStitch(tab, opts) {
     if (drawH <= 0) continue;
     const dstY = Math.round(s.y * realDpr);
     const dstH = Math.round(drawH * realDpr);
+    // Both inner and window modes paste the full viewport (incl. sidebar).
+    // Inner mode used to crop to main only — but that left sidebar empty.
     if (isInner) {
-      const rl = (typeof s.rectLeft === "number") ? s.rectLeft : info.rectLeft;
       const rt = (typeof s.rectTop === "number") ? s.rectTop : info.rectTop;
-      const srcX = Math.round(rl * realDpr);
       const srcY = Math.round(rt * realDpr);
-      const dstX = Math.round(rl * realDpr);
-      ctx.drawImage(bmp, srcX, srcY, mainWidthPx, dstH, dstX, dstY, mainWidthPx, dstH);
+      ctx.drawImage(bmp, 0, srcY, canvasW, dstH, 0, dstY, canvasW, dstH);
     } else {
       ctx.drawImage(bmp, 0, 0, canvasW, dstH, 0, dstY, canvasW, dstH);
     }
