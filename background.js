@@ -478,6 +478,9 @@ function detectAndHideStuckElements() {
     let cs;
     try { cs = getComputedStyle(el); } catch (_) { continue; }
     if (cs.display === "none" || cs.visibility === "hidden") continue;
+    // Skip our own injected progress UI / overlays.
+    if (el.id && el.id.indexOf("__fullpage_shot") === 0) continue;
+    if (el.closest && el.closest('[id^="__fullpage_shot"]')) continue;
     const r = el.getBoundingClientRect();
     if (r.width < 30 || r.height < 20) continue;
     if (r.right < 0 || r.bottom < 0 || r.left > VW || r.top > VH) continue;
@@ -563,6 +566,9 @@ function detectStickyAndFixedRects() {
     try { cs = getComputedStyle(el); } catch (_) { continue; }
     if (cs.position !== "fixed" && cs.position !== "sticky") continue;
     if (cs.display === "none" || cs.visibility === "hidden") continue;
+    // Skip our own injected progress UI / overlays so they never end up in the screenshot.
+    if (el.id && el.id.indexOf("__fullpage_shot") === 0) continue;
+    if (el.closest && el.closest('[id^="__fullpage_shot"]')) continue;
     const r = el.getBoundingClientRect();
     if (r.width < 30 || r.height < 30) continue;
     if (r.right < 0 || r.bottom < 0 || r.left > VW || r.top > VH) continue;
@@ -894,12 +900,16 @@ async function scrollStitch(tab, opts) {
     );
     const actualYNum = (scrollResult && typeof scrollResult.actualY === "number") ? scrollResult.actualY : scrollY;
 
-    // update progress UI (based on scroll progress / estimated slice total)
-    // actual slice count accounts for OVERLAP=40 overlap: each slice advances (vh - 40), so +1 for the starting slice
+    // Progress: based on slice count, not scroll position. Reason: virtual-list pages
+    // (Claude.ai, Twitter, etc.) lazy-load content as you scroll, so scrollHeight grows
+    // mid-capture and `actualY / h` stalls or even goes backwards. Slice count always
+    // moves forward, so progress always advances.
+    // dynTotal := max(initialEstimate, sliceCount + 2) guarantees percent < 90 until done,
+    // so the bar never claims completion early.
     const stepPx = Math.max(80, vh - 40);
     const estimatedTotal = Math.max(1, Math.ceil((h - vh) / stepPx) + 1);
-    const currentSegment = safety;
-    const percent = Math.min(95, 10 + Math.round((actualYNum / h) * 85));
+    const dynTotal = Math.max(estimatedTotal, safety + 2);
+    const percent = Math.min(90, 10 + Math.round((safety / dynTotal) * 80));
     try {
       await chrome.scripting.executeScript({
         target: { tabId, allFrames: false },
@@ -1028,36 +1038,20 @@ async function scrollStitch(tab, opts) {
     try {
       const ffBlob = await (await fetch(firstFrameDataUrl)).blob();
       const ffBmp = await createImageBitmap(ffBlob);
-      const VPH = info.windowVH || info.viewportH;  // viewport physical height (CSS px)
-      // Only a "truly bottom-pinned bar" counts as bottom. Rule:
-      //   bottom edge within 20% of viewport height (adaptive, ~150-200px on 839px viewport)
-      //   AND element height < half viewport (excludes full-height sidebars)
-      const BOTTOM_GAP_THRESHOLD = Math.max(80, VPH * 0.2);
-      const HEIGHT_RATIO_MAX = 0.5;
-      let topCount = 0, bottomCount = 0;
+      // All stuck elements paste at their first-viewport position (i.e. inside canvas top page).
+      // Slices were captured AFTER detectAndHide so those regions are blank; this fills them once
+      // at the top, and they never reappear lower down. Simple, no top/bottom split.
       for (const ov of stickyOverlays) {
         const sx = Math.round(ov.left * realDpr);
         const sy = Math.round(ov.top * realDpr);
         const sw = Math.round(ov.width * realDpr);
         const sh = Math.round(ov.height * realDpr);
-        const dx = Math.round(ov.left * realDpr);
-        const distFromBottom = VPH - (ov.top + ov.height);
-        const isSmallBar = ov.height < VPH * HEIGHT_RATIO_MAX;
-        const isBottom = distFromBottom < BOTTOM_GAP_THRESHOLD && isSmallBar;
-        let dy;
-        if (isBottom) {
-          // paste at canvas bottom, preserving original gap-from-bottom
-          dy = canvasH - sh - Math.round(distFromBottom * realDpr);
-          bottomCount++;
-        } else {
-          // default: paste at original position (top fixed + sidebar both fall here)
-          dy = Math.round(ov.top * realDpr);
-          topCount++;
-        }
+        const dx = sx;
+        const dy = sy;
         ctx.drawImage(ffBmp, sx, sy, sw, sh, dx, dy, sw, sh);
       }
       ffBmp.close();
-      fpsLog(`pasted ${stickyOverlays.length} sticky overlays (${topCount} top, ${bottomCount} bottom) in ${info.mode} mode at realDpr=${realDpr}`);
+      fpsLog(`pasted ${stickyOverlays.length} sticky overlays at first-viewport positions`);
     } catch (e) {
       console.warn("[fullpage-shot] sticky overlay paste failed:", e.message);
     }
