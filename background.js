@@ -892,24 +892,7 @@ async function scrollStitch(tab, opts) {
   const mainWidthPx = Math.round(w * realDpr);
 
   // main stitch — DO NOT close bmp inside the loop; close all after diff step
-  // Identify sidebar: largest CSS fixed/sticky element in stickyOverlays (height >= 70% viewport, on left)
-  // It will be pasted only in slice[0]; other slices have it cleared to bg color.
-  let sidebarRect = null;
-  if (stickyOverlays && stickyOverlays.length > 0) {
-    const VPH_for_check = info.windowVH || info.viewportH;
-    let best = null;
-    for (const ov of stickyOverlays) {
-      // Candidate: tall enough to be sidebar, anchored on left half
-      if (ov.height >= VPH_for_check * 0.7 && ov.left < (info.viewportW || w) * 0.4) {
-        if (!best || ov.height > best.height) best = ov;
-      }
-    }
-    if (best) sidebarRect = best;
-  }
-  if (sidebarRect) fpsLog(`sidebar detected at ${sidebarRect.left},${sidebarRect.top} ${sidebarRect.width}x${sidebarRect.height}`);
-
-  for (let idx = 0; idx < decodedSlices.length; idx++) {
-    const s = decodedSlices[idx];
+  for (const s of decodedSlices) {
     const bmp = s.bmp;
     const drawH = Math.min(vh, h - s.y);
     if (drawH <= 0) continue;
@@ -921,14 +904,6 @@ async function scrollStitch(tab, opts) {
       ctx.drawImage(bmp, 0, srcY, canvasW, dstH, 0, dstY, canvasW, dstH);
     } else {
       ctx.drawImage(bmp, 0, 0, canvasW, dstH, 0, dstY, canvasW, dstH);
-    }
-    // For slices after the first, clear the sidebar zone to page bg color
-    // so the sidebar doesn't repeat down the screenshot.
-    if (sidebarRect && idx > 0) {
-      const sbX = Math.round(sidebarRect.left * realDpr);
-      const sbW = Math.round(sidebarRect.width * realDpr);
-      ctx.fillStyle = pageBgColor;
-      ctx.fillRect(sbX, dstY, sbW, dstH);
     }
   }
 
