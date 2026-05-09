@@ -108,7 +108,7 @@ async function capture(tab) {
       });
     } catch (_) {}
     await sleep(30);
-    firstFrameDataUrl = await captureWithDebugger(tab.id);
+    firstFrameDataUrl = await captureVisibleTabPromise(tab.windowId);
     // restore after capture
     try {
       await chrome.scripting.executeScript({
@@ -814,9 +814,8 @@ async function scrollStitch(tab, opts) {
     // short wait so browser actually repaints
     await sleep(30);
 
-    // Use chrome.debugger Page.captureScreenshot for forced sharpness (2× on Retina)
-    // cost: short "is debugging this browser" banner, in exchange for true physical-pixel resolution
-    const visDataUrl = await captureWithDebugger(tab.id);
+    // Use chrome.tabs.captureVisibleTab — no debugger banner; output = dpr × CSS pixels
+    const visDataUrl = await captureVisibleTabPromise(tab.windowId);
 
     // restore after capture UI
     try {
@@ -1080,6 +1079,19 @@ async function scrollStitch(tab, opts) {
 
 // chrome.scripting.executeScript wrapper: runs the function in page context and returns the result
 // Capture via chrome.debugger (high-res): attach first + force deviceScaleFactor for higher resolution
+// Wrapper around chrome.tabs.captureVisibleTab returning a Promise (no debugger banner)
+function captureVisibleTabPromise(windowId) {
+  return new Promise((resolve, reject) => {
+    chrome.tabs.captureVisibleTab(windowId, { format: "png" }, (du) => {
+      const e = chrome.runtime.lastError;
+      if (e) return reject(new Error("captureVisibleTab: " + e.message));
+      if (!du) return reject(new Error("captureVisibleTab returned empty"));
+      resolve(du);
+    });
+  });
+}
+
+// Legacy: Capture via chrome.debugger (high-res). Kept for reference, no longer called.
 // Cost: shows "is debugging this browser" banner at top for a few seconds
 async function captureWithDebugger(tabId) {
   const target = { tabId };
