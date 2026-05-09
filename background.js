@@ -904,7 +904,7 @@ async function scrollStitch(tab, opts) {
       await chrome.scripting.executeScript({
         target: { tabId, allFrames: false },
         func: updateProgressUI,
-        args: [{ text: `Capturing... ${currentSegment} / ~${estimatedTotal}`, percent }]
+        args: [{ text: `Capturing... ${percent}%`, percent }]
       });
     } catch (_) {}
 
