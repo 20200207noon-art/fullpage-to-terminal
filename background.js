@@ -910,11 +910,8 @@ async function scrollStitch(tab, opts) {
     }
   }
 
-  // ── Paste overlay for CSS fixed/sticky elements (sidebar / top nav etc)──
-  // These were hidden via visibility:hidden during detect, so the stitched canvas has empty regions in their place;
-  // paste them back from the first frame so the sidebar/nav appears once in the long screenshot
-  // Does not affect share button / input bar (CSS-not-fixed → not in stickyOverlays list anyway)
-  if (firstFrameDataUrl && stickyOverlays.length > 0) {
+  // ── overlay paste fully disabled (no synthetic cover-up) ──
+  if (false && firstFrameDataUrl && stickyOverlays.length > 0) {
     try {
       const ffBlob = await (await fetch(firstFrameDataUrl)).blob();
       const ffBmp = await createImageBitmap(ffBlob);
