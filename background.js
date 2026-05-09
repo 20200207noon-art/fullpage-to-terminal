@@ -127,11 +127,19 @@ async function capture(tab) {
     console.warn("[fullpage-shot] first frame / overlay detection failed:", e.message);
   }
 
-  // 3. neutralize disabled: every "hide + paste back" approach we tried left
-  //    "smudge"/"thin line" artifacts. Accept the natural stitched output where
-  //    sidebar / share button / input bar appear once per slice — same as user
-  //    sees while scrolling the real page.
+  // 3. detect-and-hide visually-fixed elements (scroll-then-measure):
+  //    catches sidebar / share button / input bar etc, even ones not CSS-fixed.
+  //    Uses visibility:hidden (preserves layout) to avoid React reflow.
   let neutralized = false;
+  let stuckRects = [];
+  try {
+    const detected = await execInPage(tab.id, detectAndHideStuckElements);
+    if (Array.isArray(detected)) stuckRects = detected;
+    neutralized = true;
+    fpsLog("detect-and-hide stuck:", stuckRects.length, "rects");
+  } catch (e) {
+    console.warn("[fullpage-shot] detectAndHide failed:", e.message);
+  }
   await sleep(120);
 
   let dataUrl;
@@ -140,7 +148,7 @@ async function capture(tab) {
   let truncated = false;
 
   try {
-    const result = await scrollStitch(tab, { firstFrameDataUrl, stickyOverlays, pageBgColor });
+    const result = await scrollStitch(tab, { firstFrameDataUrl, stickyOverlays: stuckRects, pageBgColor });
     dataUrl = result.dataUrl;
     widthPx = result.width;
     heightPx = result.height;
@@ -151,7 +159,7 @@ async function capture(tab) {
       try {
         await chrome.scripting.executeScript({
           target: { tabId: tab.id, allFrames: false },
-          func: restoreStickyAndFixed
+          func: restoreHiddenStuckElements
         });
       } catch (_) {}
     }
@@ -434,6 +442,112 @@ function getPageBackgroundColor() {
     } catch (_) {}
   }
   return "#ffffff";
+}
+
+// Inject into target tab: scroll-then-measure to find ALL visually-fixed elements
+// (including absolute/relative ones that don't move when page scrolls).
+// Hide them on the spot with visibility:hidden (preserves layout, doesn't trigger
+// flex reflow). Save refs to window.__fpsHiddenStuck for later restore.
+function detectAndHideStuckElements() {
+  const VW = window.innerWidth;
+  const VH = window.innerHeight;
+  if (!window.__fpsHiddenStuck) window.__fpsHiddenStuck = [];
+
+  // Find scroll host (same logic as scrollStitch)
+  const MIN_HOST_WIDTH = Math.max(400, VW * 0.5);
+  let bestHost = null, bestArea = 0;
+  for (const el of document.querySelectorAll("*")) {
+    let cs;
+    try { cs = getComputedStyle(el); } catch (_) { continue; }
+    const oy = cs.overflowY;
+    if (oy !== "auto" && oy !== "scroll") continue;
+    if (cs.display === "none" || cs.visibility === "hidden") continue;
+    const sh = el.scrollHeight, ch = el.clientHeight, cw = el.clientWidth;
+    if (sh - ch < 200 || cw < MIN_HOST_WIDTH) continue;
+    const tag = el.tagName.toLowerCase();
+    if (tag === "aside" || tag === "nav") continue;
+    const area = (sh - ch) * ch;
+    if (area > bestArea) { bestArea = area; bestHost = el; }
+  }
+  const winScrollable = (document.documentElement.scrollHeight - VH) | 0;
+  const useInner = bestHost && (bestHost.scrollHeight - bestHost.clientHeight) > Math.max(winScrollable * 2, 800);
+
+  // Snapshot positions of all visible candidates
+  const candidates = [];
+  for (const el of document.querySelectorAll("*")) {
+    let cs;
+    try { cs = getComputedStyle(el); } catch (_) { continue; }
+    if (cs.display === "none" || cs.visibility === "hidden") continue;
+    const r = el.getBoundingClientRect();
+    if (r.width < 30 || r.height < 20) continue;
+    if (r.right < 0 || r.bottom < 0 || r.left > VW || r.top > VH) continue;
+    // skip large wrappers (would falsely match as "fixed" if they span viewport)
+    if (r.width > VW * 0.7 && r.height > VH * 0.7) continue;
+    candidates.push({ el, r0: { l: r.left, t: r.top, w: r.width, h: r.height } });
+  }
+
+  // Scroll a bit
+  const SCROLL_TEST = 200;
+  let restoreScroll = 0;
+  if (useInner) {
+    restoreScroll = bestHost.scrollTop || 0;
+    bestHost.scrollTop = restoreScroll + SCROLL_TEST;
+  } else {
+    restoreScroll = window.scrollY;
+    window.scrollBy(0, SCROLL_TEST);
+  }
+
+  // Re-measure: elements whose top/left didn't change = visually fixed
+  const stuck = [];
+  for (const c of candidates) {
+    const r1 = c.el.getBoundingClientRect();
+    if (Math.abs(r1.top - c.r0.t) < 5 && Math.abs(r1.left - c.r0.l) < 5) {
+      // Hide and remember
+      window.__fpsHiddenStuck.push({
+        el: c.el,
+        prevVisibility: c.el.style.visibility
+      });
+      try { c.el.style.setProperty("visibility", "hidden", "important"); } catch (_) {}
+      stuck.push({
+        left: Math.max(0, Math.round(c.r0.l)),
+        top: Math.max(0, Math.round(c.r0.t)),
+        width: Math.min(VW, Math.round(c.r0.w)),
+        height: Math.min(VH, Math.round(c.r0.h)),
+        area: Math.round(c.r0.w * c.r0.h)
+      });
+    }
+  }
+
+  // Restore scroll
+  if (useInner) bestHost.scrollTop = restoreScroll;
+  else window.scrollTo(0, restoreScroll);
+
+  // Dedup containment
+  stuck.sort((a, b) => b.area - a.area);
+  const dedup = [];
+  for (const r of stuck) {
+    const inside = dedup.some(d =>
+      r.left >= d.left - 2 && r.top >= d.top - 2 &&
+      r.left + r.width <= d.left + d.width + 2 &&
+      r.top + r.height <= d.top + d.height + 2);
+    if (!inside) dedup.push(r);
+  }
+
+  if (!window.__fpsInjectLogs) window.__fpsInjectLogs = [];
+  window.__fpsInjectLogs.push(`detectAndHide: ${candidates.length} candidates, ${stuck.length} stuck, ${dedup.length} after dedup`);
+  return dedup;
+}
+
+function restoreHiddenStuckElements() {
+  if (!window.__fpsHiddenStuck) return;
+  for (const r of window.__fpsHiddenStuck) {
+    if (!r.el) continue;
+    try {
+      if (r.prevVisibility) r.el.style.visibility = r.prevVisibility;
+      else r.el.style.removeProperty("visibility");
+    } catch (_) {}
+  }
+  delete window.__fpsHiddenStuck;
 }
 
 // Inject into target tab: detect all CSS position:fixed/sticky elements, return their viewport rects.
@@ -907,8 +1021,10 @@ async function scrollStitch(tab, opts) {
     }
   }
 
-  // ── overlay paste fully disabled (no synthetic cover-up) ──
-  if (false && firstFrameDataUrl && stickyOverlays.length > 0) {
+  // ── Paste each stuck element from first frame onto canvas top once ──
+  // Slices were captured AFTER detectAndHide, so sticky regions in slices are blank
+  // (visibility:hidden preserved layout). Now paste from first frame to fill the gaps.
+  if (firstFrameDataUrl && stickyOverlays.length > 0) {
     try {
       const ffBlob = await (await fetch(firstFrameDataUrl)).blob();
       const ffBmp = await createImageBitmap(ffBlob);
