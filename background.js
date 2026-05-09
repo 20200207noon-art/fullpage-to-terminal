@@ -127,17 +127,11 @@ async function capture(tab) {
     console.warn("[fullpage-shot] first frame / overlay detection failed:", e.message);
   }
 
-  // 3. inject "neutralize": display:none all fixed/sticky elements to avoid stitched repeats
+  // 3. neutralize disabled: every "hide + paste back" approach we tried left
+  //    "smudge"/"thin line" artifacts. Accept the natural stitched output where
+  //    sidebar / share button / input bar appear once per slice — same as user
+  //    sees while scrolling the real page.
   let neutralized = false;
-  try {
-    await chrome.scripting.executeScript({
-      target: { tabId: tab.id, allFrames: false },
-      func: neutralizeStickyAndFixed
-    });
-    neutralized = true;
-  } catch (e) {
-    console.warn("[fullpage-shot] failed to inject neutralize styles:", e.message);
-  }
   await sleep(120);
 
   let dataUrl;
