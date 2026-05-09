@@ -58,15 +58,6 @@ function setBannerError(title, sub) {
     }
     if (lastShot.error) {
       setBannerError("Capture failed", escapeHtml(lastShot.error));
-      // also show logs on failure
-      if (lastShot.logs && lastShot.logs.length > 0) {
-        const diagBox = document.getElementById("diagBox");
-        const diagText = document.getElementById("diagText");
-        if (diagBox && diagText) {
-          diagText.textContent = lastShot.logs.join("\n");
-          diagBox.style.display = "block";
-        }
-      }
       return;
     }
     lastDataUrl = lastShot.dataUrl;
