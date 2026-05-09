@@ -127,20 +127,36 @@ async function capture(tab) {
     console.warn("[fullpage-shot] first frame / overlay detection failed:", e.message);
   }
 
-  // 3. detect-and-hide visually-fixed elements (scroll-then-measure):
-  //    catches sidebar / share button / input bar etc, even ones not CSS-fixed.
-  //    Uses visibility:hidden (preserves layout) to avoid React reflow.
+  // 3. Hide CSS position:fixed/sticky elements only.
+  //    The previous "scroll-then-measure" visual detection was
+  //    too aggressive: on pages with an inner scroll host (Claude.ai, Notion), normal content
+  //    that scrolls inside the inner host could appear "stationary" under the test scroll and
+  //    get falsely flagged → its first-frame snapshot got pasted at canvas top → duplicate.
+  //    CSS-based detection has zero false positives. Trade-off: visually-pinned-but-not-CSS-fixed
+  //    elements (rare share buttons etc.) will repeat across slices — accepted.
   let neutralized = false;
-  let stuckRects = [];
   try {
-    const detected = await execInPage(tab.id, detectAndHideStuckElements);
-    if (Array.isArray(detected)) stuckRects = detected;
+    await execInPage(tab.id, neutralizeStickyAndFixed);
     neutralized = true;
-    fpsLog("detect-and-hide stuck:", stuckRects.length, "rects");
+    fpsLog("neutralize CSS fixed/sticky: done");
   } catch (e) {
-    console.warn("[fullpage-shot] detectAndHide failed:", e.message);
+    console.warn("[fullpage-shot] neutralize failed:", e.message);
   }
   await sleep(120);
+
+  // 3b. Catch small visually-pinned elements that aren't CSS-fixed (Claude.ai share button etc.)
+  let smallStuckRects = [];
+  try {
+    const detected = await execInPage(tab.id, detectAndHideSmallVisuallyStuck);
+    if (Array.isArray(detected)) smallStuckRects = detected;
+    fpsLog("small visually-stuck:", smallStuckRects.length, "rects");
+  } catch (e) {
+    console.warn("[fullpage-shot] small visually-stuck detection failed:", e.message);
+  }
+  await sleep(60);
+
+  // Merge CSS-detected and small-visually-detected rects: both get pasted once at canvas top
+  const allOverlays = stickyOverlays.concat(smallStuckRects);
 
   let dataUrl;
   let widthPx;
@@ -148,7 +164,7 @@ async function capture(tab) {
   let truncated = false;
 
   try {
-    const result = await scrollStitch(tab, { firstFrameDataUrl, stickyOverlays: stuckRects, pageBgColor });
+    const result = await scrollStitch(tab, { firstFrameDataUrl, stickyOverlays: allOverlays, pageBgColor });
     dataUrl = result.dataUrl;
     widthPx = result.width;
     heightPx = result.height;
@@ -159,7 +175,13 @@ async function capture(tab) {
       try {
         await chrome.scripting.executeScript({
           target: { tabId: tab.id, allFrames: false },
-          func: restoreHiddenStuckElements
+          func: restoreStickyAndFixed
+        });
+      } catch (_) {}
+      try {
+        await chrome.scripting.executeScript({
+          target: { tabId: tab.id, allFrames: false },
+          func: restoreSmallVisuallyStuck
         });
       } catch (_) {}
     }
@@ -444,115 +466,6 @@ function getPageBackgroundColor() {
   return "#ffffff";
 }
 
-// Inject into target tab: scroll-then-measure to find ALL visually-fixed elements
-// (including absolute/relative ones that don't move when page scrolls).
-// Hide them on the spot with visibility:hidden (preserves layout, doesn't trigger
-// flex reflow). Save refs to window.__fpsHiddenStuck for later restore.
-function detectAndHideStuckElements() {
-  const VW = window.innerWidth;
-  const VH = window.innerHeight;
-  if (!window.__fpsHiddenStuck) window.__fpsHiddenStuck = [];
-
-  // Find scroll host (same logic as scrollStitch)
-  const MIN_HOST_WIDTH = Math.max(400, VW * 0.5);
-  let bestHost = null, bestArea = 0;
-  for (const el of document.querySelectorAll("*")) {
-    let cs;
-    try { cs = getComputedStyle(el); } catch (_) { continue; }
-    const oy = cs.overflowY;
-    if (oy !== "auto" && oy !== "scroll") continue;
-    if (cs.display === "none" || cs.visibility === "hidden") continue;
-    const sh = el.scrollHeight, ch = el.clientHeight, cw = el.clientWidth;
-    if (sh - ch < 200 || cw < MIN_HOST_WIDTH) continue;
-    const tag = el.tagName.toLowerCase();
-    if (tag === "aside" || tag === "nav") continue;
-    const area = (sh - ch) * ch;
-    if (area > bestArea) { bestArea = area; bestHost = el; }
-  }
-  const winScrollable = (document.documentElement.scrollHeight - VH) | 0;
-  const useInner = bestHost && (bestHost.scrollHeight - bestHost.clientHeight) > Math.max(winScrollable * 2, 800);
-
-  // Snapshot positions of all visible candidates
-  const candidates = [];
-  for (const el of document.querySelectorAll("*")) {
-    let cs;
-    try { cs = getComputedStyle(el); } catch (_) { continue; }
-    if (cs.display === "none" || cs.visibility === "hidden") continue;
-    // Skip our own injected progress UI / overlays.
-    if (el.id && el.id.indexOf("__fullpage_shot") === 0) continue;
-    if (el.closest && el.closest('[id^="__fullpage_shot"]')) continue;
-    const r = el.getBoundingClientRect();
-    if (r.width < 30 || r.height < 20) continue;
-    if (r.right < 0 || r.bottom < 0 || r.left > VW || r.top > VH) continue;
-    // skip large wrappers (would falsely match as "fixed" if they span viewport)
-    if (r.width > VW * 0.7 && r.height > VH * 0.7) continue;
-    candidates.push({ el, r0: { l: r.left, t: r.top, w: r.width, h: r.height } });
-  }
-
-  // Scroll a bit
-  const SCROLL_TEST = 200;
-  let restoreScroll = 0;
-  if (useInner) {
-    restoreScroll = bestHost.scrollTop || 0;
-    bestHost.scrollTop = restoreScroll + SCROLL_TEST;
-  } else {
-    restoreScroll = window.scrollY;
-    window.scrollBy(0, SCROLL_TEST);
-  }
-
-  // Re-measure: elements whose top/left didn't change = visually fixed
-  const stuck = [];
-  for (const c of candidates) {
-    const r1 = c.el.getBoundingClientRect();
-    if (Math.abs(r1.top - c.r0.t) < 5 && Math.abs(r1.left - c.r0.l) < 5) {
-      // Hide and remember
-      window.__fpsHiddenStuck.push({
-        el: c.el,
-        prevVisibility: c.el.style.visibility
-      });
-      try { c.el.style.setProperty("visibility", "hidden", "important"); } catch (_) {}
-      stuck.push({
-        left: Math.max(0, Math.round(c.r0.l)),
-        top: Math.max(0, Math.round(c.r0.t)),
-        width: Math.min(VW, Math.round(c.r0.w)),
-        height: Math.min(VH, Math.round(c.r0.h)),
-        area: Math.round(c.r0.w * c.r0.h)
-      });
-    }
-  }
-
-  // Restore scroll
-  if (useInner) bestHost.scrollTop = restoreScroll;
-  else window.scrollTo(0, restoreScroll);
-
-  // Dedup containment
-  stuck.sort((a, b) => b.area - a.area);
-  const dedup = [];
-  for (const r of stuck) {
-    const inside = dedup.some(d =>
-      r.left >= d.left - 2 && r.top >= d.top - 2 &&
-      r.left + r.width <= d.left + d.width + 2 &&
-      r.top + r.height <= d.top + d.height + 2);
-    if (!inside) dedup.push(r);
-  }
-
-  if (!window.__fpsInjectLogs) window.__fpsInjectLogs = [];
-  window.__fpsInjectLogs.push(`detectAndHide: ${candidates.length} candidates, ${stuck.length} stuck, ${dedup.length} after dedup`);
-  return dedup;
-}
-
-function restoreHiddenStuckElements() {
-  if (!window.__fpsHiddenStuck) return;
-  for (const r of window.__fpsHiddenStuck) {
-    if (!r.el) continue;
-    try {
-      if (r.prevVisibility) r.el.style.visibility = r.prevVisibility;
-      else r.el.style.removeProperty("visibility");
-    } catch (_) {}
-  }
-  delete window.__fpsHiddenStuck;
-}
-
 // Inject into target tab: detect all CSS position:fixed/sticky elements, return their viewport rects.
 // Simple version: pure CSS detection, no scroll-then-measure (that triggers React re-render and breaks the page).
 // Visually-fixed-but-CSS-not-fixed elements (e.g. share button) are accepted as repeating in the stitched output for now —
@@ -678,6 +591,109 @@ function restoreStickyAndFixed() {
     document.body.style.overflow = state.bodyPrevOverflow || "";
   }
   delete window[KEY];
+}
+
+// Catches small visually-pinned elements that CSS-position detection misses (e.g. Claude.ai
+// share button, which is JS-positioned not CSS-fixed). Strict size cap (≤250×250) means
+// the false-positive case that broke mid-scroll captures (whole content panels flagged as
+// stuck) cannot happen here. Dual-scroll test (window + inner host) catches the case where
+// scrolling one mode doesn't actually move page content.
+function detectAndHideSmallVisuallyStuck() {
+  const VW = window.innerWidth;
+  const VH = window.innerHeight;
+  if (!window.__fpsHiddenSmall) window.__fpsHiddenSmall = [];
+
+  // Find inner scroll host (mirrors scrollStitch's logic)
+  const MIN_HOST_WIDTH = Math.max(400, VW * 0.5);
+  let bestHost = null, bestArea = 0;
+  for (const el of document.querySelectorAll("*")) {
+    let cs;
+    try { cs = getComputedStyle(el); } catch (_) { continue; }
+    const oy = cs.overflowY;
+    if (oy !== "auto" && oy !== "scroll") continue;
+    if (cs.display === "none" || cs.visibility === "hidden") continue;
+    const sh = el.scrollHeight, ch = el.clientHeight, cw = el.clientWidth;
+    if (sh - ch < 200 || cw < MIN_HOST_WIDTH) continue;
+    const tag = el.tagName.toLowerCase();
+    if (tag === "aside" || tag === "nav") continue;
+    const area = (sh - ch) * ch;
+    if (area > bestArea) { bestArea = area; bestHost = el; }
+  }
+
+  // Snapshot small visible candidates only
+  const MAX_W = 250, MAX_H = 250;
+  const candidates = [];
+  for (const el of document.querySelectorAll("*")) {
+    let cs;
+    try { cs = getComputedStyle(el); } catch (_) { continue; }
+    if (cs.display === "none" || cs.visibility === "hidden") continue;
+    if (el.id && el.id.indexOf("__fullpage_shot") === 0) continue;
+    if (el.closest && el.closest('[id^="__fullpage_shot"]')) continue;
+    if (el.getAttribute && el.getAttribute("data-fullpage-shot") === "ui") continue;
+    if (el.closest && el.closest('[data-fullpage-shot="ui"]')) continue;
+    const r = el.getBoundingClientRect();
+    if (r.width < 20 || r.height < 20) continue;
+    if (r.width > MAX_W || r.height > MAX_H) continue;
+    if (r.right < 0 || r.bottom < 0 || r.left > VW || r.top > VH) continue;
+    candidates.push({ el, r0: { l: r.left, t: r.top, w: r.width, h: r.height } });
+  }
+
+  // Dual-scroll test: only flag elements that resist BOTH window and inner-host scroll
+  const SCROLL_TEST = 300;
+  const movedSet = new Set();
+
+  // Test 1: window scroll
+  const winSave = window.scrollY;
+  window.scrollBy(0, SCROLL_TEST);
+  for (const c of candidates) {
+    const r1 = c.el.getBoundingClientRect();
+    if (Math.abs(r1.top - c.r0.t) >= 5 || Math.abs(r1.left - c.r0.l) >= 5) movedSet.add(c.el);
+  }
+  window.scrollTo(0, winSave);
+
+  // Test 2: inner-host scroll (if present)
+  if (bestHost) {
+    const hostSave = bestHost.scrollTop || 0;
+    bestHost.scrollTop = hostSave + SCROLL_TEST;
+    for (const c of candidates) {
+      if (movedSet.has(c.el)) continue;
+      const r1 = c.el.getBoundingClientRect();
+      if (Math.abs(r1.top - c.r0.t) >= 5 || Math.abs(r1.left - c.r0.l) >= 5) movedSet.add(c.el);
+    }
+    bestHost.scrollTop = hostSave;
+  }
+
+  // Anything that didn't move under EITHER scroll → truly stuck
+  const stuck = [];
+  for (const c of candidates) {
+    if (movedSet.has(c.el)) continue;
+    window.__fpsHiddenSmall.push({ el: c.el, prevVisibility: c.el.style.visibility });
+    try { c.el.style.setProperty("visibility", "hidden", "important"); } catch (_) {}
+    stuck.push({
+      left: Math.max(0, Math.round(c.r0.l)),
+      top: Math.max(0, Math.round(c.r0.t)),
+      width: Math.min(VW, Math.round(c.r0.w)),
+      height: Math.min(VH, Math.round(c.r0.h))
+    });
+  }
+
+  if (!window.__fpsInjectLogs) window.__fpsInjectLogs = [];
+  window.__fpsInjectLogs.push(
+    `smallVisuallyStuck: ${candidates.length} small candidates, ${stuck.length} truly stuck`
+  );
+  return stuck;
+}
+
+function restoreSmallVisuallyStuck() {
+  if (!window.__fpsHiddenSmall) return;
+  for (const r of window.__fpsHiddenSmall) {
+    if (!r.el) continue;
+    try {
+      if (r.prevVisibility) r.el.style.visibility = r.prevVisibility;
+      else r.el.style.removeProperty("visibility");
+    } catch (_) {}
+  }
+  delete window.__fpsHiddenSmall;
 }
 
 // Inject into target tab: scroll to bottom then back to top to force lazy-load rendering. Returns observed max scrollHeight.

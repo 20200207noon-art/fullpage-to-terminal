@@ -1,6 +1,6 @@
 # Privacy Policy — Fullpage to Terminal
 
-**Last updated: 2026-05-03**
+**Last updated: 2026-05-09**
 
 ## TL;DR
 
@@ -61,7 +61,7 @@ This extension does not include or load any third-party code, fonts, scripts, an
 ## Source code
 
 The full source code of this extension is open and available at:
-**https://github.com/<your-username>/fullpage-to-terminal**
+**https://github.com/20200207noon-art/fullpage-to-terminal**
 
 You can verify everything described above by reading the code yourself.
 
@@ -76,3 +76,18 @@ If this policy ever changes (e.g. if a future version adds an opt-in cloud featu
 ## Contact
 
 For questions or concerns, open an issue at the GitHub repo above, or email **20200207noon@gmail.com**.
+
+---
+
+## Native helper installer (macOS, optional)
+
+If you choose to install the optional macOS native helper (downloaded as a separate `.pkg` from the GitHub Releases page), the installer drops two files on your machine:
+
+- `/Library/Application Support/FullpageToTerminal/copy_file_to_clipboard.sh`
+- `/Library/Google/Chrome/NativeMessagingHosts/com.fullpageshot.copyfile.json`
+
+Both are 100% local, never run unless invoked by the extension via Chrome's Native Messaging, and contain no telemetry. To uninstall, run:
+
+```sh
+sudo bash "/Library/Application Support/FullpageToTerminal/uninstall.sh"
+```

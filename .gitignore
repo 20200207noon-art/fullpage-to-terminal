@@ -20,3 +20,6 @@ __pycache__/
 # 商店打包产物（每次重新打，不进 git）
 fullpage-shot.zip
 fullpage-to-terminal-store.zip
+
+# Native host .pkg build artifacts（→ GitHub Releases, 不进源码树）
+build/
