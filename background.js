@@ -838,6 +838,37 @@ async function scrollStitch(tab, opts) {
         rectTop: Math.max(0, Math.round(rect.top))
       };
     }
+    // scrollHeight can be inflated by invisible tall elements (CSS spacers, off-screen
+    // iframes, debug widgets — e.g. jrecin.jst.go.jp/seek/SeekJorDetail reports
+    // scrollHeight=5234 with only ~700px of real content). Cap at the deepest *visible*
+    // content bottom + margin to avoid huge blank tails in the stitched output.
+    const rawSH =
+      (document.documentElement.scrollHeight | 0) ||
+      (document.body && document.body.scrollHeight) ||
+      VH;
+    let realBottom = 0;
+    if (document.body) {
+      let n = 0;
+      for (const el of document.body.querySelectorAll("*")) {
+        if (n++ > 20000) break;
+        let ecs;
+        try { ecs = getComputedStyle(el); } catch (_) { continue; }
+        if (ecs.display === "none" || ecs.visibility === "hidden") continue;
+        if (parseFloat(ecs.opacity) === 0) continue;
+        const r = el.getBoundingClientRect();
+        if (r.width < 5 || r.height < 5) continue;
+        const absBottom = r.bottom + window.scrollY;
+        if (absBottom > realBottom) realBottom = absBottom;
+      }
+    }
+    const cappedH = realBottom > VH
+      ? Math.min(rawSH, Math.ceil(realBottom) + 80)
+      : rawSH;
+    const _heightLog = `height: rawSH=${rawSH}, realBottom=${Math.ceil(realBottom)}, using=${cappedH}`;
+    console.log("[fullpage-shot]", _heightLog);
+    if (!window.__fpsInjectLogs) window.__fpsInjectLogs = [];
+    window.__fpsInjectLogs.push(_heightLog);
+
     return {
       mode,
       dpr,
@@ -845,10 +876,7 @@ async function scrollStitch(tab, opts) {
         (document.documentElement.scrollWidth | 0) ||
         (document.body && document.body.scrollWidth) ||
         VW,
-      height:
-        (document.documentElement.scrollHeight | 0) ||
-        (document.body && document.body.scrollHeight) ||
-        VH,
+      height: cappedH,
       viewportW: VW,
       viewportH: VH,
       windowVH: VH,
