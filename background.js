@@ -789,19 +789,23 @@ async function scrollStitch(tab, opts) {
         rectTop: Math.max(0, Math.round(rect.top))
       };
     }
-    // Some pages (e.g. jrecin.jst.go.jp/seek/SeekJorDetail) have a CSS layout that
-    // pushes the site footer to a fixed Y far below the actual content, leaving
-    // a giant blank band in between. Plain "deepest visible content" logic gets
-    // fooled because the footer carries text/buttons. Strategy:
-    //   1. Collect the absolute Y of every "content-carrying" element
-    //      (text leaves, media/form controls, CSS background-image carriers).
-    //   2. Bin those Ys into 200px buckets along the page height.
-    //   3. Scan from top: find the deepest bucket that has >=1 content element,
-    //      THEN keep extending only as long as the next bucket is non-empty
-    //      (gap tolerance = 1 empty bucket). Cut at the last non-empty bucket.
-    // This trims both "fat empty tail" pages and "content / huge gap / footer"
-    // pages — the site footer (login buttons / copyright) is acceptable collateral
-    // since users capture for content, not chrome.
+    // Strategy (v1.23.5 final): cap canvas to the deepest "real content" Y,
+    // ignoring site-footer elements that some sites push to a fixed deep Y
+    // (e.g. jrecin.jst.go.jp/seek/SeekJorDetail puts a login footer at 5234px
+    // when actual content ends at ~700px). Trade-off: site footers (copyright,
+    // login buttons) are not captured — acceptable since users screenshot for
+    // content, not chrome.
+    //
+    // Two earlier passes failed:
+    //   v1 "deepest visible element" — fooled by empty wrapper divs whose own
+    //       bbox spans the full scrollHeight.
+    //   v2 "walk-from-top + gap-tol" — fooled by long articles (MDN docs) where
+    //       mid-content sections leave >400px of natural whitespace; algorithm
+    //       broke too early and cut 88% of the article.
+    //
+    // v3 (current): collect content-carrying elements (text leaves, media tags,
+    // form controls, bg-image carriers), EXCLUDE anything inside a footer-like
+    // container, then cap = max(content Y bucket) + 80px padding. No gap walk.
     const rawSH =
       (document.documentElement.scrollHeight | 0) ||
       (document.body && document.body.scrollHeight) ||
@@ -826,6 +830,18 @@ async function scrollStitch(tab, opts) {
         }
       } catch (_) {}
 
+      // Mark all descendants of footer-like containers so they don't anchor
+      // the deepest-content estimate. Site footers (login bar, copyright, sub-nav)
+      // belong to chrome, not the page's content.
+      const footerSet = new WeakSet();
+      try {
+        const FOOTER_SEL = "footer, [role='contentinfo'], [id*='footer' i], [class*='footer' i]";
+        for (const f of document.body.querySelectorAll(FOOTER_SEL)) {
+          footerSet.add(f);
+          for (const c of f.querySelectorAll("*")) footerSet.add(c);
+        }
+      } catch (_) {}
+
       const MEDIA_TAGS = new Set([
         "IMG","PICTURE","VIDEO","CANVAS","SVG","IFRAME",
         "INPUT","BUTTON","SELECT","TEXTAREA",
@@ -835,6 +851,7 @@ async function scrollStitch(tab, opts) {
       let n = 0;
       for (const el of document.body.querySelectorAll("*")) {
         if (n++ > 30000) break;
+        if (footerSet.has(el)) continue;
         const isMedia = MEDIA_TAGS.has(el.tagName);
         const isText = textParents.has(el);
         let ecs;
@@ -850,36 +867,19 @@ async function scrollStitch(tab, opts) {
       }
     }
 
-    // Bucket scan: find the deepest contiguous content region from the top.
-    // BUCKET=200 + GAP_TOL=1 = up to 400px of continuous whitespace tolerated
-    // mid-content. Tighter values (BUCKET=100) tested but cut real article body
-    // when section breaks > 200px exist. Conservative: prefer extra blank tail
-    // over losing content.
+    // Cap = deepest content bucket + 80px. Bucketing (200px) absorbs sub-pixel
+    // jitter and lets us round to a clean stitch boundary.
     let cappedH = rawSH;
     if (contentBottoms.length > 0) {
-      const BUCKET = 200, GAP_TOL = 1;
+      const BUCKET = 200;
       const numBuckets = Math.ceil(rawSH / BUCKET) + 1;
-      const occupied = new Uint8Array(numBuckets);
-      let maxBottom = 0;
+      let maxIdx = -1;
       for (const b of contentBottoms) {
         const idx = Math.floor(b / BUCKET);
-        if (idx >= 0 && idx < numBuckets) occupied[idx] = 1;
-        if (b > maxBottom) maxBottom = b;
+        if (idx > maxIdx && idx < numBuckets) maxIdx = idx;
       }
-      // walk down from bucket 0; allow GAP_TOL consecutive empty buckets
-      let lastFilled = -1, gapRun = 0;
-      for (let i = 0; i < numBuckets; i++) {
-        if (occupied[i]) {
-          lastFilled = i;
-          gapRun = 0;
-        } else if (lastFilled >= 0) {
-          gapRun++;
-          if (gapRun > GAP_TOL) break;
-        }
-      }
-      if (lastFilled >= 0) {
-        const cutoff = (lastFilled + 1) * BUCKET + 80; // +80 breathing room
-        cappedH = Math.min(rawSH, cutoff);
+      if (maxIdx >= 0) {
+        cappedH = Math.min(rawSH, (maxIdx + 1) * BUCKET + 80);
       }
     }
     const _heightLog = `height: rawSH=${rawSH}, contentCount=${contentBottoms.length}, using=${cappedH}`;
