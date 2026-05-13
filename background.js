@@ -345,8 +345,9 @@ async function saveToDownloads(dataUrl, sourceUrl) {
   return filePath;
 }
 
-// Inject into target tab: install a floating progress UI (top bar + center card).
-// so user sees "extension is capturing, scrolling is expected" — not page bug
+// Inject a single 2px progress line at the top of the page. No card, no text,
+// no pulse — minimum visual weight. The line is the only signal that we're
+// scrolling intentionally (not a page bug).
 function installProgressUI() {
   const KEY = "__fullpageShotProgressUI__";
   if (window[KEY]) return;
@@ -356,78 +357,29 @@ function installProgressUI() {
   root.style.cssText = [
     "all: initial",
     "position: fixed",
-    "left: 0", "top: 0", "right: 0", "bottom: 0",
+    "left: 0", "top: 0", "right: 0",
+    "height: 2px",
     "z-index: 2147483647",
-    "pointer-events: none",
-    "font-family: -apple-system, BlinkMacSystemFont, sans-serif"
+    "pointer-events: none"
   ].join(";");
 
-  // colorful 4px progress bar at top (more visible)
-  const barWrap = document.createElement("div");
-  barWrap.style.cssText = [
-    "position: absolute", "top: 0", "left: 0", "right: 0",
-    "height: 4px", "background: rgba(0,0,0,0.15)"
-  ].join(";");
   const bar = document.createElement("div");
   bar.id = "__fullpage_shot_progress_bar__";
   bar.style.cssText = [
     "height: 100%", "width: 0%",
-    "background: linear-gradient(90deg, #2da44e 0%, #58a6ff 50%, #f78166 100%)",
-    "box-shadow: 0 0 8px rgba(88, 166, 255, 0.6)",
-    "transition: width 200ms ease"
+    "background: #58a6ff",
+    "transition: width 180ms cubic-bezier(0.22, 1, 0.36, 1)"
   ].join(";");
-  barWrap.appendChild(bar);
 
-  // large card in bottom-right (does not block top content, eye-catching)
-  const card = document.createElement("div");
-  card.id = "__fullpage_shot_progress_card__";
-  card.style.cssText = [
-    "position: absolute",
-    "right: 24px", "bottom: 24px",
-    "background: linear-gradient(135deg, #1f6feb, #2da44e)",
-    "color: #ffffff",
-    "padding: 16px 22px",
-    "border-radius: 14px",
-    "border: 2px solid rgba(255,255,255,0.25)",
-    "box-shadow: 0 12px 48px rgba(0,0,0,0.55), 0 0 0 4px rgba(88,166,255,0.15)",
-    "font-size: 16px",
-    "font-weight: 700",
-    "letter-spacing: 0.3px",
-    "white-space: nowrap",
-    "min-width: 220px",
-    "display: flex",
-    "align-items: center",
-    "gap: 12px",
-    "animation: __fps_pulse 1.6s ease-in-out infinite"
-  ].join(";");
-  card.innerHTML = `
-    <span style="font-size: 26px; line-height: 1;">📸</span>
-    <span id="__fullpage_shot_progress_text__" style="flex:1">Capturing full page...</span>
-  `;
-
-  // pulse animation
-  const style = document.createElement("style");
-  style.id = "__fullpage_shot_anim_style__";
-  style.textContent = `
-    @keyframes __fps_pulse {
-      0%, 100% { box-shadow: 0 12px 48px rgba(0,0,0,0.55), 0 0 0 4px rgba(88,166,255,0.15); }
-      50%      { box-shadow: 0 12px 48px rgba(0,0,0,0.55), 0 0 0 12px rgba(88,166,255,0.05); }
-    }
-  `;
-  document.head.appendChild(style);
-
-  root.appendChild(barWrap);
-  root.appendChild(card);
+  root.appendChild(bar);
   document.documentElement.appendChild(root);
-  window[KEY] = { root, styleEl: style };
+  window[KEY] = { root };
 }
 
 function updateProgressUI(args) {
   const KEY = "__fullpageShotProgressUI__";
   if (!window[KEY]) return;
-  const text = document.getElementById("__fullpage_shot_progress_text__");
   const bar = document.getElementById("__fullpage_shot_progress_bar__");
-  if (text && args && args.text) text.textContent = args.text;
   if (bar && args && typeof args.percent === "number") {
     bar.style.width = Math.max(0, Math.min(100, args.percent)) + "%";
   }
@@ -443,7 +395,6 @@ function removeProgressUI() {
   const KEY = "__fullpageShotProgressUI__";
   if (!window[KEY]) return;
   try { window[KEY].root.remove(); } catch (_) {}
-  try { if (window[KEY].styleEl) window[KEY].styleEl.remove(); } catch (_) {}
   delete window[KEY];
 }
 
@@ -838,33 +789,100 @@ async function scrollStitch(tab, opts) {
         rectTop: Math.max(0, Math.round(rect.top))
       };
     }
-    // scrollHeight can be inflated by invisible tall elements (CSS spacers, off-screen
-    // iframes, debug widgets — e.g. jrecin.jst.go.jp/seek/SeekJorDetail reports
-    // scrollHeight=5234 with only ~700px of real content). Cap at the deepest *visible*
-    // content bottom + margin to avoid huge blank tails in the stitched output.
+    // Some pages (e.g. jrecin.jst.go.jp/seek/SeekJorDetail) have a CSS layout that
+    // pushes the site footer to a fixed Y far below the actual content, leaving
+    // a giant blank band in between. Plain "deepest visible content" logic gets
+    // fooled because the footer carries text/buttons. Strategy:
+    //   1. Collect the absolute Y of every "content-carrying" element
+    //      (text leaves, media/form controls, CSS background-image carriers).
+    //   2. Bin those Ys into 200px buckets along the page height.
+    //   3. Scan from top: find the deepest bucket that has >=1 content element,
+    //      THEN keep extending only as long as the next bucket is non-empty
+    //      (gap tolerance = 1 empty bucket). Cut at the last non-empty bucket.
+    // This trims both "fat empty tail" pages and "content / huge gap / footer"
+    // pages — the site footer (login buttons / copyright) is acceptable collateral
+    // since users capture for content, not chrome.
     const rawSH =
       (document.documentElement.scrollHeight | 0) ||
       (document.body && document.body.scrollHeight) ||
       VH;
-    let realBottom = 0;
+    const contentBottoms = [];
     if (document.body) {
+      const textParents = new WeakSet();
+      try {
+        const tw = document.createTreeWalker(
+          document.body,
+          NodeFilter.SHOW_TEXT,
+          { acceptNode(node) {
+            return (node.nodeValue && node.nodeValue.trim())
+              ? NodeFilter.FILTER_ACCEPT
+              : NodeFilter.FILTER_REJECT;
+          } }
+        );
+        let tn, tnCount = 0;
+        while ((tn = tw.nextNode())) {
+          if (tnCount++ > 50000) break;
+          if (tn.parentElement) textParents.add(tn.parentElement);
+        }
+      } catch (_) {}
+
+      const MEDIA_TAGS = new Set([
+        "IMG","PICTURE","VIDEO","CANVAS","SVG","IFRAME",
+        "INPUT","BUTTON","SELECT","TEXTAREA",
+        "AUDIO","EMBED","OBJECT","HR"
+      ]);
+
       let n = 0;
       for (const el of document.body.querySelectorAll("*")) {
-        if (n++ > 20000) break;
+        if (n++ > 30000) break;
+        const isMedia = MEDIA_TAGS.has(el.tagName);
+        const isText = textParents.has(el);
         let ecs;
         try { ecs = getComputedStyle(el); } catch (_) { continue; }
         if (ecs.display === "none" || ecs.visibility === "hidden") continue;
         if (parseFloat(ecs.opacity) === 0) continue;
+        if (!isMedia && !isText) {
+          if (!(ecs.backgroundImage && ecs.backgroundImage !== "none")) continue;
+        }
         const r = el.getBoundingClientRect();
         if (r.width < 5 || r.height < 5) continue;
-        const absBottom = r.bottom + window.scrollY;
-        if (absBottom > realBottom) realBottom = absBottom;
+        contentBottoms.push(Math.ceil(r.bottom + window.scrollY));
       }
     }
-    const cappedH = realBottom > VH
-      ? Math.min(rawSH, Math.ceil(realBottom) + 80)
-      : rawSH;
-    const _heightLog = `height: rawSH=${rawSH}, realBottom=${Math.ceil(realBottom)}, using=${cappedH}`;
+
+    // Bucket scan: find the deepest contiguous content region from the top.
+    // BUCKET=200 + GAP_TOL=1 = up to 400px of continuous whitespace tolerated
+    // mid-content. Tighter values (BUCKET=100) tested but cut real article body
+    // when section breaks > 200px exist. Conservative: prefer extra blank tail
+    // over losing content.
+    let cappedH = rawSH;
+    if (contentBottoms.length > 0) {
+      const BUCKET = 200, GAP_TOL = 1;
+      const numBuckets = Math.ceil(rawSH / BUCKET) + 1;
+      const occupied = new Uint8Array(numBuckets);
+      let maxBottom = 0;
+      for (const b of contentBottoms) {
+        const idx = Math.floor(b / BUCKET);
+        if (idx >= 0 && idx < numBuckets) occupied[idx] = 1;
+        if (b > maxBottom) maxBottom = b;
+      }
+      // walk down from bucket 0; allow GAP_TOL consecutive empty buckets
+      let lastFilled = -1, gapRun = 0;
+      for (let i = 0; i < numBuckets; i++) {
+        if (occupied[i]) {
+          lastFilled = i;
+          gapRun = 0;
+        } else if (lastFilled >= 0) {
+          gapRun++;
+          if (gapRun > GAP_TOL) break;
+        }
+      }
+      if (lastFilled >= 0) {
+        const cutoff = (lastFilled + 1) * BUCKET + 80; // +80 breathing room
+        cappedH = Math.min(rawSH, cutoff);
+      }
+    }
+    const _heightLog = `height: rawSH=${rawSH}, contentCount=${contentBottoms.length}, using=${cappedH}`;
     console.log("[fullpage-shot]", _heightLog);
     if (!window.__fpsInjectLogs) window.__fpsInjectLogs = [];
     window.__fpsInjectLogs.push(_heightLog);
