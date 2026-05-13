@@ -80,6 +80,27 @@ async function capture(tab) {
     });
   } catch (_) {}
 
+  // 0.7 If the site loads a dedicated print stylesheet via <link media="print">,
+  // flip it to media="all" so the capture uses the page's print layout.
+  // Print stylesheets typically hide site chrome (sponsor banners, navigation
+  // link grids, social bars) and tighten spacing — exactly what users want
+  // when sending a screenshot to a terminal-based AI CLI.
+  // Only flips dedicated <link media="print"> stylesheets (jrecin pattern);
+  // does NOT touch inline @media print blocks (Wikipedia pattern, where flipping
+  // would *add* "see also" expansions and make the page longer).
+  let printApplied = 0;
+  try {
+    const result = await chrome.scripting.executeScript({
+      target: { tabId: tab.id, allFrames: false },
+      func: applyPrintMedia
+    });
+    printApplied = (result && result[0] && result[0].result) || 0;
+    if (printApplied > 0) {
+      fpsLog("print media applied:", printApplied, "stylesheet(s) flipped");
+      await sleep(700); // wait for CSS reflow
+    }
+  } catch (_) {}
+
   // 1. inject pre-scroll script to trigger lazy load (many feeds like Reddit/Twitter need scroll to render)
   try {
     await chrome.scripting.executeScript({
@@ -182,6 +203,14 @@ async function capture(tab) {
         await chrome.scripting.executeScript({
           target: { tabId: tab.id, allFrames: false },
           func: restoreSmallVisuallyStuck
+        });
+      } catch (_) {}
+    }
+    if (printApplied > 0) {
+      try {
+        await chrome.scripting.executeScript({
+          target: { tabId: tab.id, allFrames: false },
+          func: restorePrintMedia
         });
       } catch (_) {}
     }
@@ -396,6 +425,31 @@ function removeProgressUI() {
   if (!window[KEY]) return;
   try { window[KEY].root.remove(); } catch (_) {}
   delete window[KEY];
+}
+
+// Inject into target tab: switch dedicated print stylesheets on so the capture
+// uses the page's print layout (no chrome, tighter spacing). Only touches
+// <link media="print"> stylesheets — leaves inline @media print rules alone
+// (those are usually utility classes / safety overrides, not full chrome-strip).
+function applyPrintMedia() {
+  const flipped = [];
+  for (const link of document.querySelectorAll("link[rel='stylesheet']")) {
+    if (link.media && /\bprint\b/i.test(link.media) &&
+        !/\b(screen|all)\b/i.test(link.media)) {
+      flipped.push({ link: link, originalMedia: link.media });
+      link.media = "all";
+    }
+  }
+  window.__fpsFlippedPrintMedia = flipped;
+  return flipped.length;
+}
+
+function restorePrintMedia() {
+  const flipped = window.__fpsFlippedPrintMedia || [];
+  for (const item of flipped) {
+    try { item.link.media = item.originalMedia; } catch (_) {}
+  }
+  delete window.__fpsFlippedPrintMedia;
 }
 
 // Inject into target tab: get page's real background color (for canvas fill, avoid white edge on dark pages)
