@@ -789,104 +789,16 @@ async function scrollStitch(tab, opts) {
         rectTop: Math.max(0, Math.round(rect.top))
       };
     }
-    // Strategy (v1.23.5 final): cap canvas to the deepest "real content" Y,
-    // ignoring site-footer elements that some sites push to a fixed deep Y
-    // (e.g. jrecin.jst.go.jp/seek/SeekJorDetail puts a login footer at 5234px
-    // when actual content ends at ~700px). Trade-off: site footers (copyright,
-    // login buttons) are not captured — acceptable since users screenshot for
-    // content, not chrome.
-    //
-    // Two earlier passes failed:
-    //   v1 "deepest visible element" — fooled by empty wrapper divs whose own
-    //       bbox spans the full scrollHeight.
-    //   v2 "walk-from-top + gap-tol" — fooled by long articles (MDN docs) where
-    //       mid-content sections leave >400px of natural whitespace; algorithm
-    //       broke too early and cut 88% of the article.
-    //
-    // v3 (current): collect content-carrying elements (text leaves, media tags,
-    // form controls, bg-image carriers), EXCLUDE anything inside a footer-like
-    // container, then cap = max(content Y bucket) + 80px padding. No gap walk.
+    // Capture full scrollHeight verbatim — same behavior as GoFullPage.
+    // v1.23.4-6 attempted to "cap" canvas to detected content end, using DOM
+    // analysis (deepest-element / bucket-scan / footer-exclusion). Each
+    // iteration introduced new edge-case bugs and could only see DOM, not the
+    // actual visual whitespace users care about. Reverted to plain rawSH —
+    // any future cap should be done by post-capture pixel scan, not DOM.
     const rawSH =
       (document.documentElement.scrollHeight | 0) ||
       (document.body && document.body.scrollHeight) ||
       VH;
-    const contentBottoms = [];
-    if (document.body) {
-      const textParents = new WeakSet();
-      try {
-        const tw = document.createTreeWalker(
-          document.body,
-          NodeFilter.SHOW_TEXT,
-          { acceptNode(node) {
-            return (node.nodeValue && node.nodeValue.trim())
-              ? NodeFilter.FILTER_ACCEPT
-              : NodeFilter.FILTER_REJECT;
-          } }
-        );
-        let tn, tnCount = 0;
-        while ((tn = tw.nextNode())) {
-          if (tnCount++ > 50000) break;
-          if (tn.parentElement) textParents.add(tn.parentElement);
-        }
-      } catch (_) {}
-
-      // Mark all descendants of footer-like containers so they don't anchor
-      // the deepest-content estimate. Site footers (login bar, copyright, sub-nav)
-      // belong to chrome, not the page's content.
-      const footerSet = new WeakSet();
-      try {
-        const FOOTER_SEL = "footer, [role='contentinfo'], [id*='footer' i], [class*='footer' i]";
-        for (const f of document.body.querySelectorAll(FOOTER_SEL)) {
-          footerSet.add(f);
-          for (const c of f.querySelectorAll("*")) footerSet.add(c);
-        }
-      } catch (_) {}
-
-      const MEDIA_TAGS = new Set([
-        "IMG","PICTURE","VIDEO","CANVAS","SVG","IFRAME",
-        "INPUT","BUTTON","SELECT","TEXTAREA",
-        "AUDIO","EMBED","OBJECT","HR"
-      ]);
-
-      let n = 0;
-      for (const el of document.body.querySelectorAll("*")) {
-        if (n++ > 30000) break;
-        if (footerSet.has(el)) continue;
-        const isMedia = MEDIA_TAGS.has(el.tagName);
-        const isText = textParents.has(el);
-        let ecs;
-        try { ecs = getComputedStyle(el); } catch (_) { continue; }
-        if (ecs.display === "none" || ecs.visibility === "hidden") continue;
-        if (parseFloat(ecs.opacity) === 0) continue;
-        if (!isMedia && !isText) {
-          if (!(ecs.backgroundImage && ecs.backgroundImage !== "none")) continue;
-        }
-        const r = el.getBoundingClientRect();
-        if (r.width < 5 || r.height < 5) continue;
-        contentBottoms.push(Math.ceil(r.bottom + window.scrollY));
-      }
-    }
-
-    // Cap = deepest content bucket + 80px. Bucketing (200px) absorbs sub-pixel
-    // jitter and lets us round to a clean stitch boundary.
-    let cappedH = rawSH;
-    if (contentBottoms.length > 0) {
-      const BUCKET = 200;
-      const numBuckets = Math.ceil(rawSH / BUCKET) + 1;
-      let maxIdx = -1;
-      for (const b of contentBottoms) {
-        const idx = Math.floor(b / BUCKET);
-        if (idx > maxIdx && idx < numBuckets) maxIdx = idx;
-      }
-      if (maxIdx >= 0) {
-        cappedH = Math.min(rawSH, (maxIdx + 1) * BUCKET + 80);
-      }
-    }
-    const _heightLog = `height: rawSH=${rawSH}, contentCount=${contentBottoms.length}, using=${cappedH}`;
-    console.log("[fullpage-shot]", _heightLog);
-    if (!window.__fpsInjectLogs) window.__fpsInjectLogs = [];
-    window.__fpsInjectLogs.push(_heightLog);
-
     return {
       mode,
       dpr,
@@ -894,7 +806,7 @@ async function scrollStitch(tab, opts) {
         (document.documentElement.scrollWidth | 0) ||
         (document.body && document.body.scrollWidth) ||
         VW,
-      height: cappedH,
+      height: rawSH,
       viewportW: VW,
       viewportH: VH,
       windowVH: VH,
