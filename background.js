@@ -883,12 +883,15 @@ async function scrollStitch(tab, opts) {
   let h = Math.max(1, info.height);
   const vh = Math.max(100, info.viewportH);
   const dpr = info.dpr;
+  // Inner mode: the host column is drawn starting below the page chrome above it
+  // (header etc.), so the first frame lines up 1:1 at the canvas top.
+  const topOffsetCss = info.mode === "inner" ? Math.max(0, info.rectTop || 0) : 0;
   // canvas at physical resolution (×dpr) preserves capture sharpness.
   // 16384 is the OffscreenCanvas hard limit (physical px), so CSS-height limit is 16384/dpr.
   let truncated = false;
   const maxCssHeight = Math.floor(MAX_FINAL_HEIGHT / dpr);
-  if (h > maxCssHeight) {
-    h = maxCssHeight;
+  if (h > maxCssHeight - topOffsetCss) {
+    h = maxCssHeight - topOffsetCss;
     truncated = true;
   }
 
@@ -1036,7 +1039,7 @@ async function scrollStitch(tab, opts) {
   }
 
   const canvasW = Math.round(baseCanvasW_css * realDpr);
-  const canvasH = Math.round(h * realDpr);
+  const canvasH = Math.round((h + topOffsetCss) * realDpr);
   const canvas = new OffscreenCanvas(canvasW, canvasH);
   const ctx = canvas.getContext("2d");
   if (!ctx) throw new Error("Cannot create OffscreenCanvas 2D context");
@@ -1048,17 +1051,41 @@ async function scrollStitch(tab, opts) {
 
   const mainWidthPx = Math.round(w * realDpr);
 
+  // Inner mode: everything OUTSIDE the host column (side menu, header, right
+  // rail) is static — paint it exactly ONCE from the first frame at the canvas
+  // top, then let the host band be drawn over its own column. Previously each
+  // slice stamped the full viewport width, so leftover side-column pixels
+  // repeated every ~viewport down the whole image (bet365 "A-Z"/"Trending"
+  // floating garbage).
+  if (isInner && firstFrameDataUrl) {
+    try {
+      const ffBlob = await (await fetch(firstFrameDataUrl)).blob();
+      const ffBmp = await createImageBitmap(ffBlob);
+      ctx.drawImage(ffBmp, 0, 0);
+      ffBmp.close();
+      fpsLog("inner mode: first frame painted once at top (static side regions)");
+    } catch (e) {
+      console.warn("[fullpage-shot] first-frame base paint failed:", e.message);
+    }
+  }
+
   // main stitch — DO NOT close bmp inside the loop; close all after diff step
+  // Inner mode crops ONLY the host column band from each slice; side regions
+  // stay as painted from the first frame (static, no repeats).
   for (const s of decodedSlices) {
     const bmp = s.bmp;
     const drawH = Math.min(vh, h - s.y);
     if (drawH <= 0) continue;
-    const dstY = Math.round(s.y * realDpr);
+    const dstY = Math.round((topOffsetCss + s.y) * realDpr);
     const dstH = Math.round(drawH * realDpr);
     if (isInner) {
       const rt = (typeof s.rectTop === "number") ? s.rectTop : info.rectTop;
+      const rl = (typeof s.rectLeft === "number") ? s.rectLeft : info.rectLeft;
+      const srcX = Math.round(rl * realDpr);
       const srcY = Math.round(rt * realDpr);
-      ctx.drawImage(bmp, 0, srcY, canvasW, dstH, 0, dstY, canvasW, dstH);
+      const bandW = Math.min(mainWidthPx, bmp.width - srcX);
+      const dstX = Math.round((info.rectLeft || 0) * realDpr);
+      ctx.drawImage(bmp, srcX, srcY, bandW, dstH, dstX, dstY, bandW, dstH);
     } else {
       ctx.drawImage(bmp, 0, 0, canvasW, dstH, 0, dstY, canvasW, dstH);
     }
@@ -1205,7 +1232,7 @@ async function scrollStitch(tab, opts) {
 
   const outBlob = await canvas.convertToBlob({ type: "image/png" });
   const dataUrl = await blobToDataUrl(outBlob);
-  return { dataUrl, width: w, height: info.height, truncated };
+  return { dataUrl, width: w, height: info.height + topOffsetCss, truncated };
 }
 
 // chrome.scripting.executeScript wrapper: runs the function in page context and returns the result
