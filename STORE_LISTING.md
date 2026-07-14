@@ -2,6 +2,36 @@
 
 ---
 
+## 📌 v1.24.1 SHIP STATUS（2026-07-14 更新）
+
+| 项 | 状态 |
+|---|---|
+| Web Store account 注册 | ✅ |
+| Listing draft（ID `nibipkcfhagabnfhdmlpcnmmnebagolp`）| ✅ |
+| GitHub repo `20200207noon-art/fullpage-to-terminal` | ✅ |
+| Privacy policy 托管：`https://20200207noon-art.github.io/fullpage-to-terminal/PRIVACY.html` | ✅ |
+| Promo images（promo/ 4 张）| ✅ |
+| Native host `.pkg` 构建脚本 | ✅ |
+| **v1.24.1 zip 待上传** | ⏳ `/Users/bo-bot/fullpage-shot.zip` |
+
+### 上传步骤（10 分钟）
+
+1. 打开 [Web Store dashboard](https://chrome.google.com/webstore/devconsole/4cbaee16-6011-44e0-a257-7fe9b6cab7d8/nibipkcfhagabnfhdmlpcnmmnebagolp/edit)
+2. 左侧 → **Package** → **Upload new package** → 选 `/Users/bo-bot/fullpage-shot.zip`
+3. **Store listing** tab → 滚到底部找 "What's new in this version" → 粘贴下面的 release notes
+4. 右上角 **Submit for review**
+
+### v1.24.1 What's new（复制粘贴用）
+
+```
+v1.24.1
+- Fixed: on sites using CSS smooth scrolling (e.g. MDN), captures could come out garbled at the top with large blank areas below. All programmatic scrolling now forces instant mode, so slice positions are always read accurately.
+- New (from 1.24.0): when a site ships a dedicated print stylesheet (<link media="print">), the capture now uses it. This produces dramatically cleaner screenshots on sites that designed a print layout — sponsor banners, sitemap link grids, and verbose footers are hidden, layout is tightened.
+- Conservative: sites without a dedicated print stylesheet (most sites) capture the same as before — no change to existing behavior.
+```
+
+---
+
 ## 1. Item name (扩展名称)
 
 ```
@@ -145,7 +175,7 @@ Chrome 商店上架时会让你填一个 "Privacy practices" 表单，逐项回�
 
 | 资产 | 路径 | 用途 |
 |---|---|---|
-| **商店扩展 zip** | `/Users/bo-bot/fullpage-to-terminal-store.zip` | 上传到 "Package" |
+| **商店扩展 zip** | `/Users/bo-bot/fullpage-shot.zip` | 上传到 "Package" |
 | Icon 128 | 已嵌在 zip 内 | manifest 自动用 |
 | Promo 1280×800 | `/Users/bo-bot/fullpage-shot/promo/promo-1280x800.png` | "Marquee promo tile" / "Marketing image" |
 | Promo 440×280 | `/Users/bo-bot/fullpage-shot/promo/promo-440x280.png` | "Small promo tile" |

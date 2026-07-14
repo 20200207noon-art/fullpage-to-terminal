@@ -529,7 +529,10 @@ function neutralizeStickyAndFixed() {
   styleEl.id = "__fullpage_shot_anim_off__";
   styleEl.textContent =
     "*,*::before,*::after{animation-duration:0s !important;animation-delay:0s !important;" +
-    "transition-duration:0s !important;transition-delay:0s !important;}";
+    "transition-duration:0s !important;transition-delay:0s !important;}" +
+    // scroll-behavior:smooth (MDN etc.) makes programmatic scrolls animate; position reads
+    // right after scrollTo() then return stale values → misaligned slices + early loop exit.
+    "html,body,*{scroll-behavior:auto !important;}";
   (document.head || document.documentElement).appendChild(styleEl);
 
   // 2. Walk all elements, find CSS fixed/sticky → display:none
@@ -647,25 +650,27 @@ function detectAndHideSmallVisuallyStuck() {
   const SCROLL_TEST = 300;
   const movedSet = new Set();
 
-  // Test 1: window scroll
+  // Test 1: window scroll — behavior:"instant" overrides CSS scroll-behavior:smooth
+  // (MDN etc.); with smooth, the synchronous rect re-read below sees pre-scroll
+  // positions and ALL candidates get falsely flagged as stuck.
   const winSave = window.scrollY;
-  window.scrollBy(0, SCROLL_TEST);
+  window.scrollBy({ top: SCROLL_TEST, behavior: "instant" });
   for (const c of candidates) {
     const r1 = c.el.getBoundingClientRect();
     if (Math.abs(r1.top - c.r0.t) >= 5 || Math.abs(r1.left - c.r0.l) >= 5) movedSet.add(c.el);
   }
-  window.scrollTo(0, winSave);
+  window.scrollTo({ top: winSave, behavior: "instant" });
 
   // Test 2: inner-host scroll (if present)
   if (bestHost) {
     const hostSave = bestHost.scrollTop || 0;
-    bestHost.scrollTop = hostSave + SCROLL_TEST;
+    bestHost.scrollTo({ top: hostSave + SCROLL_TEST, behavior: "instant" });
     for (const c of candidates) {
       if (movedSet.has(c.el)) continue;
       const r1 = c.el.getBoundingClientRect();
       if (Math.abs(r1.top - c.r0.t) >= 5 || Math.abs(r1.left - c.r0.l) >= 5) movedSet.add(c.el);
     }
-    bestHost.scrollTop = hostSave;
+    bestHost.scrollTo({ top: hostSave, behavior: "instant" });
   }
 
   // Anything that didn't move under EITHER scroll → truly stuck
@@ -726,7 +731,7 @@ function preloadAllContent() {
     const startTs = Date.now();
 
     const finish = () => {
-      window.scrollTo(0, 0);
+      window.scrollTo({ top: 0, behavior: "instant" });
       // give browser one frame so sticky headers settle back to normal
       requestAnimationFrame(() => {
         setTimeout(
@@ -746,7 +751,7 @@ function preloadAllContent() {
         lastH = h;
       }
 
-      window.scrollTo(0, y);
+      window.scrollTo({ top: y, behavior: "instant" });
       y += stepPx;
 
       if (Date.now() - startTs > maxWaitMs) return finish();
@@ -910,7 +915,7 @@ async function scrollStitch(tab, opts) {
         let actualY = 0;
         let rectLeft = 0, rectTop = 0, hostW = 0, hostH = 0;
         if (window.__fpsMode === "inner" && window.__fpsHost) {
-          window.__fpsHost.scrollTop = yy;
+          window.__fpsHost.scrollTo({ top: yy, behavior: "instant" });
           actualY = window.__fpsHost.scrollTop || 0;
           // wait a frame after scroll before reading rect (let layout update)
           const rect = window.__fpsHost.getBoundingClientRect();
@@ -919,7 +924,7 @@ async function scrollStitch(tab, opts) {
           hostW = window.__fpsHost.clientWidth | 0;
           hostH = window.__fpsHost.clientHeight | 0;
         } else {
-          window.scrollTo(0, yy);
+          window.scrollTo({ top: yy, behavior: "instant" });
           actualY = window.scrollY || 0;
         }
         return { actualY, rectLeft, rectTop, hostW, hostH };
@@ -991,9 +996,9 @@ async function scrollStitch(tab, opts) {
     tabId,
     (yy) => {
       if (window.__fpsMode === "inner" && window.__fpsHost) {
-        window.__fpsHost.scrollTop = yy;
+        window.__fpsHost.scrollTo({ top: yy, behavior: "instant" });
       } else {
-        window.scrollTo(0, yy);
+        window.scrollTo({ top: yy, behavior: "instant" });
       }
     },
     [origScrollY || 0]

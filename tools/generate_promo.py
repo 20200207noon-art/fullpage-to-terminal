@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """生成 Chrome Web Store 上架所需的宣传图：
-- 大宣传图  1280×800（主图）
-- 小宣传图   440×280（缩略图）
+- 大宣传图    1280×800（主图）
+- 小宣传图     440×280（缩略图）
+- Marquee tile 1400×560（精选位用，2.5:1 横幅）
 """
 
 import os
@@ -206,10 +207,62 @@ def make_promo_440x280():
     print("wrote", out_path)
 
 
+def make_promo_1400x560():
+    W, H = 1400, 560
+    im = vertical_grad(W, H, BG_GRAD_TOP, BG_GRAD_BOT).convert("RGBA")
+    d = ImageDraw.Draw(im)
+
+    # Left: icon + title + subtitle + bullets
+    pad_l = 70
+    icon = Image.open(ICON_PATH).convert("RGBA").resize((110, 110), Image.LANCZOS)
+    im.alpha_composite(icon, (pad_l, 70))
+
+    f_name = find_font(54, bold=True)
+    f_tag = find_font(26)
+    d.text((pad_l + 138, 75), "Fullpage to Terminal", font=f_name, fill=TEXT_HEAD)
+    d.text((pad_l + 138, 142), "Screenshot → paste into Claude Code", font=f_tag, fill=TEXT_BODY)
+
+    bullets = [
+        ("✓", "Capture the entire page (not just the visible part)"),
+        ("✓", "Auto-copies as a file reference — paste with ⌘V"),
+        ("✓", "Claude Code receives it as [Image #N], no manual steps"),
+    ]
+    f_bullet = find_font(20)
+    bullets_y = 230
+    for i, (mark, text) in enumerate(bullets):
+        y = bullets_y + i * 42
+        d.text((pad_l, y), mark, font=f_bullet, fill=ACCENT_GREEN)
+        d.text((pad_l + 32, y), text, font=f_bullet, fill=TEXT_BODY)
+
+    f_kbd = find_font(18, mono=True)
+    d.text((pad_l, 430), "Hotkey", font=find_font(14), fill=TEXT_MUTED)
+    d.text((pad_l, 452), "⌥+A  ·  macOS", font=f_kbd, fill=ACCENT)
+
+    # Right: terminal mockup, sized for the wider canvas
+    term_w = 580
+    term_h = 200
+    term_x = W - term_w - 70
+    term_y = (H - term_h) // 2
+    term = draw_terminal_mockup(term_w, term_h)
+    im.alpha_composite(term, (term_x, term_y))
+
+    f_caption = find_font(15)
+    caption = "What appears in your Claude Code terminal after pressing ⌘V"
+    bbox = d.textbbox((0, 0), caption, font=f_caption)
+    cw = bbox[2] - bbox[0]
+    d.text((term_x + (term_w - cw) // 2, term_y + term_h + 14),
+           caption, font=f_caption, fill=TEXT_MUTED)
+
+    out_path = os.path.join(OUT_DIR, "promo-1400x560.png")
+    im.convert("RGB").save(out_path, "PNG", optimize=True)
+    print("wrote", out_path)
+
+
 def main():
     os.makedirs(OUT_DIR, exist_ok=True)
     make_promo_1280x800()
     make_promo_440x280()
+    make_promo_1400x560()
 
 
 if __name__ == "__main__":

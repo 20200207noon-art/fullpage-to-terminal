@@ -73,7 +73,7 @@ def make_screenshot_1280x800():
     d.text((116, 26), "Fullpage to Terminal", font=find_font(13), fill=TEXT)
     # URL
     d.rounded_rectangle([300, 18, 1240, 50], radius=8, fill=(50, 54, 60))
-    d.text((316, 26), "chrome-extension://...akodjdhihjilm.../viewer.html",
+    d.text((316, 26), "chrome-extension://nibipkcfhagabnf.../viewer.html",
            font=find_font(13, mono=True), fill=MUTED)
 
     # ── 主体：viewer 页 ─────────────────────────────
@@ -163,7 +163,7 @@ def make_screenshot_1280x800():
 
     # ── 文件路径行 📁 Saved to ... ─────────────
     saved_y = sub_y + 60
-    saved_text = "📁 Saved to /Users/you/Downloads/fullpage-en.wikipedia.org-2026-05-03-23-05-12.png"
+    saved_text = "📁 Saved to /Users/you/Downloads/fullpage-en.wikipedia.org-2026-05-09-22-50.png"
     f_saved = find_font(15, mono=True)
     bb = d.textbbox((0, 0), saved_text, font=f_saved)
     sw = bb[2] - bb[0]
@@ -219,7 +219,7 @@ def make_screenshot_1280x800():
 
     # ── 底部状态行 ──────────────────────
     foot_y = H - 40
-    d.text((W // 2 - 200, foot_y), "1280 × 8400  ·  892 KB  ·  Sun May 3, 23:05",
+    d.text((W // 2 - 200, foot_y), "1280 × 8400  ·  892 KB  ·  Sat May 9, 22:50",
            font=find_font(11), fill=MUTED)
 
     out_path = os.path.join(OUT_DIR, "screenshot-1280x800.png")
