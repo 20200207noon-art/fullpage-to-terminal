@@ -6,12 +6,14 @@
     <title data-i18n="viewerTitle">Full-page screenshot</title>
     <style>
       :root {
-        --bg: #0e1116;
-        --panel: #161b22;
+        --bg: #14171c;
+        --bar: #1c2128;
         --border: #2a313c;
         --text: #e6edf3;
         --muted: #8b949e;
-        --accent: #2da44e;
+        --ok: #2da44e;
+        --info: #58a6ff;
+        --err: #f85149;
         --err-bg: #2d1417;
         --err-bd: #6e2730;
         --err-fg: #ffb4ba;
@@ -25,158 +27,124 @@
         font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Helvetica Neue", Arial, sans-serif;
       }
       body { display: flex; flex-direction: column; }
-      .banner, .fallback-action, .footer, #errBox { flex: 0 0 auto; }
-      .img-wrap { flex: 1 1 auto; overflow: auto; }
 
-      /* ── Success banner — the only visual focal point ───── */
-      .banner {
-        background: linear-gradient(180deg, #1f3a25, #15291a);
-        border-bottom: 2px solid var(--accent);
-        padding: 14px 24px 12px;
-        text-align: center;
-        position: relative;
+      /* ── Slim toolbar: brand · status · path · actions ───── */
+      .bar {
+        flex: 0 0 auto;
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        height: 46px;
+        padding: 0 14px;
+        background: var(--bar);
+        border-bottom: 1px solid var(--border);
       }
-      .banner-headline {
-        font-size: 22px;
-        font-weight: 800;
-        color: #b6f0c5;
-        margin: 0 0 4px;
-        letter-spacing: -0.3px;
+      /* thin accent line signals state at a glance */
+      .bar::after { content: none; }
+      body.ok       .bar { box-shadow: inset 0 -2px 0 var(--ok); }
+      body.fallback .bar { box-shadow: inset 0 -2px 0 var(--info); }
+      body.err      .bar { box-shadow: inset 0 -2px 0 var(--err); }
+
+      .brand {
+        display: flex; align-items: center; gap: 8px;
+        flex: 0 0 auto;
+        font-weight: 700; font-size: 13px;
+        letter-spacing: -0.2px;
+        white-space: nowrap;
       }
-      .banner-headline .check {
-        color: var(--accent);
-        margin-right: 6px;
+      .brand img { width: 20px; height: 20px; display: block; }
+
+      .status {
+        display: flex; align-items: baseline; gap: 8px;
+        min-width: 0;
+        flex: 0 1 auto;
+        white-space: nowrap;
       }
-      .banner-sub {
-        font-size: 14px;
-        color: #d8e8df;
-        font-weight: 500;
-        margin: 0 0 4px;
-      }
-      .banner-sub kbd {
+      .status .dot { font-size: 10px; }
+      body.ok       .status .dot { color: var(--ok); }
+      body.fallback .status .dot { color: var(--info); }
+      body.err      .status .dot { color: var(--err); }
+      #bannerTitle { font-size: 13px; font-weight: 700; }
+      #bannerSub   { font-size: 12px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; }
+      #bannerSub b { color: var(--text); }
+      #bannerSub kbd {
         display: inline-block;
-        padding: 2px 7px; margin: 0 1px;
+        padding: 0 5px;
         font-family: ui-monospace, "SF Mono", Menlo, monospace;
-        font-size: 12px;
-        font-weight: 600;
+        font-size: 11px; font-weight: 600;
         background: #0d1117;
         border: 1px solid #30363d;
         border-radius: 4px;
-        box-shadow: 0 1px 0 rgba(0,0,0,0.5);
         color: #fff;
       }
-      .banner-saved {
-        margin: 4px 0 0;
-        font-size: 12px;
-        color: #c8e8d3;
+      #bannerSub .img-token {
         font-family: ui-monospace, "SF Mono", Menlo, monospace;
-        font-weight: 500;
-        word-break: break-all;
-        padding: 0 16px;
+        font-size: 11px; font-weight: 700;
+        background: rgba(255,255,255,0.10);
+        border: 1px solid rgba(255,255,255,0.22);
+        border-radius: 4px;
+        padding: 0 5px;
       }
-      .banner-saved .pin { margin-right: 4px; }
-      .banner.fallback .banner-saved { color: #9ab0d4; }
-      .banner-sub .img-token {
-        display: inline-block;
-        background: rgba(255,255,255,0.12);
-        color: #fff;
-        border: 1px solid rgba(255,255,255,0.25);
-        border-radius: 5px;
-        padding: 1px 8px;
+
+      /* saved path — truncated, click to copy */
+      #bannerSaved {
+        flex: 1 1 auto;
+        min-width: 60px;
+        margin: 0;
+        text-align: right;
         font-family: ui-monospace, "SF Mono", Menlo, monospace;
-        font-size: 14px;
-        font-weight: 700;
+        font-size: 11px;
+        color: var(--muted);
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        direction: rtl;          /* keep the filename tail visible when truncated */
+        cursor: pointer;
       }
-      .banner-saveas {
-        position: absolute;
-        right: 20px; top: 20px;
+      #bannerSaved:hover { color: var(--text); }
+      #bannerSaved bdo { unicode-bidi: bidi-override; direction: ltr; }
+
+      .actions { display: flex; align-items: center; gap: 8px; flex: 0 0 auto; }
+      .actions button {
         appearance: none;
         border: 1px solid var(--border);
-        background: rgba(0,0,0,0.3);
+        background: transparent;
         color: var(--text);
-        padding: 8px 14px; border-radius: 8px;
-        cursor: pointer; font-size: 12px;
+        height: 30px;
+        padding: 0 12px;
+        border-radius: 7px;
+        cursor: pointer;
+        font-size: 12px;
+        white-space: nowrap;
       }
-      .banner-saveas:hover { background: rgba(0,0,0,0.55); }
-      .banner-hotkey {
-        position: absolute;
-        left: 20px; top: 22px;
-        font-size: 11px;
-        color: rgba(255,255,255,0.45);
-        font-family: ui-monospace, "SF Mono", Menlo, monospace;
-        letter-spacing: 0.3px;
+      .actions button:hover { background: rgba(255,255,255,0.06); }
+      /* fallback copy = the one primary action */
+      #copyBtn {
+        border: 0;
+        background: var(--info); color: #0d1117;
+        font-weight: 700;
       }
-      .banner-hotkey kbd {
-        display: inline-block;
-        padding: 1px 5px; margin: 0 1px;
-        background: rgba(0,0,0,0.35);
-        border: 1px solid rgba(255,255,255,0.15);
-        border-radius: 4px;
-        font-family: inherit;
-        font-size: 11px;
-        color: rgba(255,255,255,0.7);
+      #copyBtn:hover { filter: brightness(1.08); background: var(--info); }
+      #copyBtn:disabled {
+        background: var(--ok); color: #fff;
+        cursor: default; filter: none;
       }
+      #logsBtn { padding: 0 9px; color: var(--muted); }
 
-      /* Fallback state: turns blue when no native host (prompt to click button) */
-      .banner.fallback {
-        background: linear-gradient(180deg, #1c2842, #131a2b);
-        border-bottom-color: #58a6ff;
-      }
-      .banner.fallback .banner-headline { color: #c8d8ff; }
-      .banner.fallback .banner-headline .check { color: #58a6ff; }
-
-      /* Error state: red */
-      .banner.err {
-        background: linear-gradient(180deg, #3d1a1f, #2a1217);
-        border-bottom-color: #6e2730;
-      }
-      .banner.err .banner-headline { color: var(--err-fg); }
-
+      /* ── Image fills everything below the bar ───── */
       .img-wrap {
-        padding: 0;
-        text-align: left;
+        flex: 1 1 auto;
+        overflow: auto;
+        background: var(--bg);
       }
       .img-wrap img {
         display: block;
-        max-width: 100%;
-        height: auto;
         image-rendering: -webkit-optimize-contrast;
         image-rendering: crisp-edges;
       }
-      .img-wrap.actual-size img {
-        max-width: none;
-        width: auto;
-      }
-      .img-wrap.actual-size {
-        overflow: auto;
-      }
-      .zoom-bar {
-        text-align: center;
-        padding: 8px 24px 0;
-        font-size: 12px;
-        color: var(--muted);
-      }
-      .zoom-bar button {
-        appearance: none;
-        background: transparent;
-        border: 1px solid var(--border);
-        color: var(--text);
-        padding: 4px 10px;
-        border-radius: 6px;
-        cursor: pointer;
-        font-size: 12px;
-        margin-left: 8px;
-      }
-      .zoom-bar button:hover { background: var(--panel); }
+      .img-wrap.actual-size img { max-width: none; width: auto; }
 
-      .footer {
-        color: var(--muted);
-        font-size: 11px;
-        text-align: center;
-        padding: 12px 24px 32px;
-        word-break: break-all;
-      }
-
+      /* ── Error / diagnostics panels ───── */
       .error {
         margin: 24px; padding: 16px;
         background: var(--err-bg);
@@ -185,55 +153,48 @@
         white-space: pre-wrap;
         font-family: ui-monospace, monospace;
         font-size: 13px;
+        overflow: auto;
       }
-
-      /* "Copy" button shown only in fallback mode */
-      .fallback-action {
-        text-align: center;
-        padding: 0 24px 16px;
-      }
-      #copyBtn {
-        appearance: none; border: 0;
-        background: #58a6ff; color: #0d1117;
-        font-size: 16px; font-weight: 700;
-        padding: 12px 28px;
-        border-radius: 10px; cursor: pointer;
-        box-shadow: 0 2px 12px rgba(88,166,255,0.4);
-      }
-      #copyBtn:hover { filter: brightness(1.08); }
-      #copyBtn:disabled {
-        background: var(--accent); color: #fff;
-        cursor: default; box-shadow: none;
+      #diagBox {
+        flex: 0 0 auto;
+        max-height: 40vh;
+        overflow: auto;
+        margin: 0;
+        padding: 10px 14px;
+        background: #0d1117;
+        border-top: 1px solid var(--border);
+        font-family: ui-monospace, "SF Mono", Menlo, monospace;
+        font-size: 11px;
+        color: var(--muted);
+        white-space: pre-wrap;
       }
     </style>
   </head>
   <body>
-    <!-- Single focal point: tell the user the outcome -->
-    <div class="banner" id="banner">
-      <span class="banner-hotkey">⌨ <kbd>⌥</kbd>+<kbd>A</kbd></span>
-      <button class="banner-saveas" id="downloadBtn" type="button" data-i18n="btnSaveAs">⬇ Save as</button>
-      <h1 class="banner-headline" id="bannerHeadline">
-        <span class="check">✓</span> <span id="bannerTitle">Image copied</span>
-      </h1>
-      <p class="banner-saved" id="bannerSaved" style="display:none;">
-        <span class="pin">📁</span>Saved to <span id="bannerSavedPath"></span>
-      </p>
-      <p class="banner-sub" id="bannerSub">
-        Press <kbd>⌘</kbd><kbd>V</kbd> anywhere to paste — shows as <span class="img-token">[Image&nbsp;#N]</span> in Claude Code
-      </p>
-    </div>
-
-    <!-- Copy button shown only in fallback mode -->
-    <div class="fallback-action" id="fallbackAction" style="display:none;">
-      <button id="copyBtn" type="button">📋 Click to copy path</button>
-    </div>
+    <header class="bar">
+      <span class="brand">
+        <img src="icons/icon48.png" alt="">
+        <span data-i18n="extName">Fullpage to Terminal</span>
+      </span>
+      <span class="status">
+        <span class="dot">●</span>
+        <span id="bannerTitle"></span>
+        <span id="bannerSub"></span>
+      </span>
+      <p id="bannerSaved" style="display:none;" title=""><bdo id="bannerSavedPath"></bdo></p>
+      <span class="actions">
+        <button id="copyBtn" type="button" style="display:none;">📋 Copy path</button>
+        <button id="downloadBtn" type="button" data-i18n="btnSaveAs">⬇ Save as</button>
+        <button id="logsBtn" type="button" title="Diagnostics">ⓘ</button>
+      </span>
+    </header>
 
     <div class="img-wrap actual-size" id="imgWrap" style="display:none;">
       <img id="shotImg" alt="screenshot">
     </div>
 
     <div id="errBox" class="error" style="display:none;"></div>
-    <div id="meta" class="footer" style="display:none;"></div>
+    <pre id="diagBox" style="display:none;"><code id="diagText"></code></pre>
 
     <script src="viewer.js"></script>
   </body>

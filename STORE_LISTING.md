@@ -25,6 +25,7 @@
 
 ```
 v1.24.1
+- New: redesigned result page — a slim toolbar on top (status, saved path, copy / save actions) with the full screenshot filling the rest of the window.
 - Fixed: on sites using CSS smooth scrolling (e.g. MDN), captures could come out garbled at the top with large blank areas below. All programmatic scrolling now forces instant mode, so slice positions are always read accurately.
 - New (from 1.24.0): when a site ships a dedicated print stylesheet (<link media="print">), the capture now uses it. This produces dramatically cleaner screenshots on sites that designed a print layout — sponsor banners, sitemap link grids, and verbose footers are hidden, layout is tightened.
 - Conservative: sites without a dedicated print stylesheet (most sites) capture the same as before — no change to existing behavior.

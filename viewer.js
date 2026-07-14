@@ -1,20 +1,20 @@
-// viewer.js — minimal "Image copied" success view
+// viewer.js — GoFullPage-style slim toolbar + full image below
 
 const t = (key, ...subs) => chrome.i18n.getMessage(key, subs.length ? subs : undefined) || "";
 
 const $ = (id) => document.getElementById(id);
-const banner          = $("banner");
 const bannerTitle     = $("bannerTitle");
 const bannerSub       = $("bannerSub");
 const bannerSaved     = $("bannerSaved");
 const bannerSavedPath = $("bannerSavedPath");
-const fallbackAction  = $("fallbackAction");
 const copyBtn         = $("copyBtn");
 const downloadBtn     = $("downloadBtn");
+const logsBtn         = $("logsBtn");
 const imgWrap         = $("imgWrap");
 const shotImg         = $("shotImg");
-const metaEl          = $("meta");
 const errBox          = $("errBox");
+const diagBox         = $("diagBox");
+const diagText        = $("diagText");
 
 let lastDataUrl = null;
 let lastMeta    = null;
@@ -30,26 +30,20 @@ function applyStaticI18n() {
   });
 }
 
-function setBannerSuccess(title, sub) {
-  banner.className = "banner";
+function setStatus(state, title, subHtml) {
+  document.body.className = state; // ok | fallback | err
   bannerTitle.textContent = title;
-  bannerSub.innerHTML = sub;
+  bannerSub.innerHTML = subHtml || "";
 }
-
-function setBannerFallback(title, sub) {
-  banner.className = "banner fallback";
-  bannerTitle.textContent = title;
-  bannerSub.innerHTML = sub;
-}
-
-function setBannerError(title, sub) {
-  banner.className = "banner err";
-  bannerTitle.textContent = title;
-  bannerSub.innerHTML = sub;
-}
+const setBannerSuccess  = (title, sub) => setStatus("ok", title, sub);
+const setBannerFallback = (title, sub) => setStatus("fallback", title, sub);
+const setBannerError    = (title, sub) => setStatus("err", title, sub);
 
 (async function init() {
   applyStaticI18n();
+  logsBtn.addEventListener("click", () => {
+    diagBox.style.display = diagBox.style.display === "none" ? "block" : "none";
+  });
   try {
     const { lastShot } = await chrome.storage.local.get("lastShot");
     if (!lastShot) {
@@ -57,7 +51,10 @@ function setBannerError(title, sub) {
       return;
     }
     if (lastShot.error) {
-      setBannerError("Capture failed", escapeHtml(lastShot.error));
+      setBannerError("Capture failed", "");
+      errBox.textContent = lastShot.error;
+      errBox.style.display = "block";
+      if (lastShot.logs && lastShot.logs.length) diagText.textContent = lastShot.logs.join("\n");
       return;
     }
     lastDataUrl = lastShot.dataUrl;
@@ -65,19 +62,11 @@ function setBannerError(title, sub) {
 
     shotImg.src = lastDataUrl;
     imgWrap.style.display = "block";
-    renderMeta(lastMeta);
 
-    // viewer defaults to actual-size (set via HTML class) — always 100% sharp, no toggle
-
-    // show diagnostic logs if any
-    if (lastMeta.logs && lastMeta.logs.length > 0) {
-      const diagBox = document.getElementById("diagBox");
-      const diagText = document.getElementById("diagText");
-      if (diagBox && diagText) {
-        diagText.textContent = lastMeta.logs.join("\n");
-        diagBox.style.display = "block";
-      }
-    }
+    // diagnostics: meta summary + capture logs, behind the ⓘ button
+    diagText.textContent =
+      metaSummary(lastMeta) +
+      (lastMeta.logs && lastMeta.logs.length ? "\n\n" + lastMeta.logs.join("\n") : "");
 
     bindDownload();
 
@@ -89,26 +78,30 @@ function setBannerError(title, sub) {
       return;
     }
 
-    // show on-disk path
+    // show on-disk path (click = copy path)
     bannerSavedPath.textContent = lastMeta.savedPath;
+    bannerSaved.title = lastMeta.savedPath;
     bannerSaved.style.display = "block";
+    bannerSaved.addEventListener("click", () => {
+      navigator.clipboard.writeText(lastMeta.savedPath).catch(() => {});
+    });
 
     // main path: native host already wrote a file reference to the clipboard
     if (lastMeta.clipboardMode === "file-ref") {
       copied = true;
       setBannerSuccess(
         "Image copied",
-        `Press <kbd>⌘</kbd><kbd>V</kbd> anywhere to paste — shows as <span class="img-token">[Image&nbsp;#N]</span> in Claude Code`
+        `<kbd>⌘</kbd><kbd>V</kbd> to paste — shows as <span class="img-token">[Image&nbsp;#N]</span> in Claude Code`
       );
       return;
     }
 
     // fallback: native host not installed → show a button user can click
     pathText = `@${lastMeta.savedPath}`;
-    fallbackAction.style.display = "block";
+    copyBtn.style.display = "";
     setBannerFallback(
       "Almost ready",
-      `Click the button below, then press <kbd>⌘</kbd><kbd>V</kbd> in <b>Claude Code</b>`
+      `Copy the path, then <kbd>⌘</kbd><kbd>V</kbd> in <b>Claude Code</b>`
     );
     bindFallbackCopy();
     tryAutoCopy();
@@ -134,7 +127,7 @@ function bindFallbackCopy() {
   copyBtn.addEventListener("click", () => triggerCopy("button"));
   document.addEventListener("click", (ev) => {
     if (copied) return;
-    if (ev.target === downloadBtn || ev.target === copyBtn) return;
+    if (ev.target === downloadBtn || ev.target === copyBtn || ev.target === logsBtn) return;
     triggerCopy("anywhere");
   });
   document.addEventListener("keydown", (ev) => {
@@ -144,43 +137,37 @@ function bindFallbackCopy() {
   });
 }
 
+function markCopied() {
+  copied = true;
+  copyBtn.disabled = true;
+  copyBtn.textContent = "✓ Copied";
+  setBannerSuccess(
+    "Path copied",
+    `Switch to <b>Claude Code</b>, <kbd>⌘</kbd><kbd>V</kbd> then Enter`
+  );
+}
+
 function triggerCopy(source) {
   if (!pathText || copied) return;
   console.log("[fullpage-shot] copy triggered by", source);
   navigator.clipboard.writeText(pathText)
-    .then(() => {
-      copied = true;
-      copyBtn.disabled = true;
-      copyBtn.textContent = "✓ Copied — go paste";
-      setBannerSuccess(
-        "Path copied",
-        `Switch to <b>Claude Code</b>, press <kbd>⌘</kbd><kbd>V</kbd> then Enter`
-      );
-    })
+    .then(markCopied)
     .catch((err) => console.error("clipboard.writeText failed:", err));
 }
 
 function tryAutoCopy() {
   if (!pathText || !navigator.clipboard) return;
   navigator.clipboard.writeText(pathText)
-    .then(() => {
-      copied = true;
-      copyBtn.disabled = true;
-      copyBtn.textContent = "✓ Copied — go paste";
-      setBannerSuccess(
-        "Path copied",
-        `Switch to <b>Claude Code</b>, press <kbd>⌘</kbd><kbd>V</kbd> then Enter`
-      );
-    })
+    .then(markCopied)
     .catch(() => { /* silent */ });
 }
 
-function renderMeta(m) {
+function metaSummary(m) {
   const sizeKb = lastDataUrl ? Math.round((lastDataUrl.length * 3) / 4 / 1024) : 0;
   const ts = m.capturedAt ? new Date(m.capturedAt).toLocaleString() : "";
   const dim = m.width && m.height ? `${m.width} × ${m.height}` : "";
-  const path = m.savedPath ? ` · ${escapeHtml(m.savedPath)}` : "";
-  metaEl.textContent = `${dim} · ${sizeKb} KB · ${ts}${path}`;
+  const path = m.savedPath ? ` · ${m.savedPath}` : "";
+  return `${dim} · ${sizeKb} KB · ${ts}${path}`;
 }
 
 function makeFilename(m) {
