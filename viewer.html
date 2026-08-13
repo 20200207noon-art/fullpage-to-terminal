@@ -137,12 +137,24 @@
         overflow: auto;
         background: var(--bg);
       }
+      /* Default: show the shot at the same on-screen size the page had.
+         The PNG is in PHYSICAL pixels (width = cssWidth × devicePixelRatio),
+         so on a Retina screen an unscaled <img> renders 2× too big. viewer.js
+         sets width = naturalWidth / dpr; max-width keeps it inside the window. */
       .img-wrap img {
         display: block;
+        max-width: 100%;
+        height: auto;
+        cursor: zoom-in;
+      }
+      /* click = 1:1 physical pixels (pixel-peeping), scrolls both ways */
+      .img-wrap.actual-size img {
+        max-width: none;
+        width: auto !important;
+        cursor: zoom-out;
         image-rendering: -webkit-optimize-contrast;
         image-rendering: crisp-edges;
       }
-      .img-wrap.actual-size img { max-width: none; width: auto; }
 
       /* ── Error / diagnostics panels ───── */
       .error {
@@ -174,7 +186,7 @@
     <header class="bar">
       <span class="brand">
         <img src="icons/icon48.png" alt="">
-        <span data-i18n="extName">Fullpage to Terminal</span>
+        <span data-i18n="extName">Fullpage Copy</span>
       </span>
       <span class="status">
         <span class="dot">●</span>
@@ -189,7 +201,7 @@
       </span>
     </header>
 
-    <div class="img-wrap actual-size" id="imgWrap" style="display:none;">
+    <div class="img-wrap" id="imgWrap" style="display:none;">
       <img id="shotImg" alt="screenshot">
     </div>
 

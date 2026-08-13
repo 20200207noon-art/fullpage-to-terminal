@@ -62,6 +62,7 @@ const setBannerError    = (title, sub) => setStatus("err", title, sub);
 
     shotImg.src = lastDataUrl;
     imgWrap.style.display = "block";
+    bindImageZoom();
 
     // diagnostics: meta summary + capture logs, behind the ⓘ button
     diagText.textContent =
@@ -109,6 +110,31 @@ const setBannerError    = (title, sub) => setStatus("err", title, sub);
     setBannerError("Load failed", escapeHtml(e.message));
   }
 })();
+
+// The PNG is captured at PHYSICAL resolution (naturalWidth = cssWidth × dpr).
+// Rendering it unscaled makes it look 2× too big on any Retina/HiDPI screen —
+// that was the "the screenshot is huge on this Mac but fine on the other one"
+// bug: the difference was the display's devicePixelRatio, not Chrome's version.
+// Default view = logical size (naturalWidth / dpr), capped to the window width.
+// Click toggles 1:1 physical pixels for pixel-peeping.
+function bindImageZoom() {
+  const applyLogicalWidth = () => {
+    if (!shotImg.naturalWidth) return;
+    // Prefer the page's own CSS width from meta: for a very tall page the capture
+    // is scaled down to fit the canvas limit, so naturalWidth / dpr would under-
+    // shoot. Fall back to dpr only when meta has no width.
+    const cssW = (lastMeta && lastMeta.width) ||
+                 Math.round(shotImg.naturalWidth / (window.devicePixelRatio || 1));
+    shotImg.style.width = Math.round(cssW) + "px";
+  };
+  shotImg.addEventListener("load", applyLogicalWidth);
+  if (shotImg.complete) applyLogicalWidth();
+  // dragging the window between a Retina and a non-Retina display changes dpr
+  window.addEventListener("resize", applyLogicalWidth);
+  shotImg.addEventListener("click", () => {
+    imgWrap.classList.toggle("actual-size");
+  });
+}
 
 function bindDownload() {
   downloadBtn.addEventListener("click", (ev) => {
@@ -165,9 +191,12 @@ function tryAutoCopy() {
 function metaSummary(m) {
   const sizeKb = lastDataUrl ? Math.round((lastDataUrl.length * 3) / 4 / 1024) : 0;
   const ts = m.capturedAt ? new Date(m.capturedAt).toLocaleString() : "";
-  const dim = m.width && m.height ? `${m.width} × ${m.height}` : "";
+  const dim = m.width && m.height ? `${m.width} × ${m.height} CSS px` : "";
+  const px  = m.pixelWidth && m.pixelHeight ? ` · ${m.pixelWidth} × ${m.pixelHeight} image px` : "";
+  const scale = m.outScale ? ` · ${(+m.outScale).toFixed(2)}× output` : "";
+  const cut = m.truncated ? ` · TRUNCATED at ${m.truncatedAt} CSS px` : "";
   const path = m.savedPath ? ` · ${m.savedPath}` : "";
-  return `${dim} · ${sizeKb} KB · ${ts}${path}`;
+  return `${dim}${px}${scale}${cut} · ${sizeKb} KB · ${ts}${path}`;
 }
 
 function makeFilename(m) {

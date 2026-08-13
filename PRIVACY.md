@@ -1,4 +1,4 @@
-# Privacy Policy — Fullpage to Terminal
+# Privacy Policy — Fullpage Copy
 
 **Last updated: 2026-05-09**
 

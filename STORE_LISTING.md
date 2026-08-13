@@ -2,7 +2,25 @@
 
 ---
 
-## 📌 v1.24.1 SHIP STATUS（2026-07-14 更新）
+## 📌 v1.24.3 SHIP STATUS（2026-08-14 更新）
+
+> **改名了**：`Fullpage to Terminal` → **`Fullpage Copy`**。
+> Web Store 里的 Item name 也要跟着改（Store listing tab 顶部第一个字段）。
+> 扩展 ID 不变，还是 `nibipkcfhagabnfhdmlpcnmmnebagolp`，属于同一个 item 的更新。
+
+### v1.24.3 What's new（复制粘贴用）
+
+```
+v1.24.3
+- Renamed to Fullpage Copy — the point of this extension is copying a whole long page as one image.
+- Fixed: on Retina / HiDPI screens the result page showed the screenshot at twice its real size, forcing you to scroll sideways. It now displays at the page's own size; click the image to switch to 1:1 pixels.
+- Fixed: very tall pages were silently cut off (above ~8192 px of page height on a 2× screen). The whole page is now kept, scaled down just enough to fit, instead of losing the bottom.
+- The result page now reports the exact image size, output scale, and whether anything had to be cut.
+```
+
+---
+
+## 📌 v1.24.1 SHIP STATUS（2026-07-14，历史记录）
 
 | 项 | 状态 |
 |---|---|
@@ -36,7 +54,7 @@ v1.24.1
 ## 1. Item name (扩展名称)
 
 ```
-Fullpage to Terminal
+Fullpage Copy
 ```
 
 ---
@@ -44,51 +62,42 @@ Fullpage to Terminal
 ## 2. Short description (短描述, ≤132 字符)
 
 ```
-Capture a full webpage screenshot and paste it straight into Claude Code (or any terminal-based AI CLI) as [Image #N].
+Copy a whole long webpage as one image — full-page screenshot straight to your clipboard, paste anywhere with one key.
 ```
 
-(112 字符 ✓)
+(118 字符 ✓)
 
 ---
 
 ## 3. Detailed description (详细描述)
 
 ```
-The fastest way to send a full webpage screenshot to Claude Code (or any terminal-based AI CLI). Press the hotkey, switch to your terminal, paste — done. The whole scrollable page shows up as [Image #N]. Just 2 keystrokes total.
+One key copies the entire webpage — not just the part you can see — as a single image, already on your clipboard. Press Option+A, switch to wherever you want it, press ⌘V. Two steps, done.
 
-Compared to alternatives:
+Every other full-page screenshot extension stops at "here's your download." You still have to open Finder, hunt for the file, ⌘C it, switch app, ⌘V — five steps for something you wanted to paste once. Fullpage Copy skips all of that: the finished image is on the clipboard the moment the shutter sounds.
 
-• GoFullPage and similar full-page screenshot extensions: capture, then download a PNG — you still have to open Finder, find the file, ⌘C it, switch app, ⌘V. That's 5 steps.
-• macOS Cmd+Shift+Ctrl+4: 2 steps, but it only captures the visible viewport — anything below the fold is missed.
-• Fullpage to Terminal: 2 steps, AND captures the entire scrollable page.
+And macOS's own Cmd+Shift+4 is two steps, but it only grabs the visible window — everything below the fold is missed.
 
-The differentiator is the combination of "full page" + "auto-on-clipboard as a file reference" — no manual file juggling.
-
-Fullpage to Terminal lets you capture a complete screenshot of any webpage — not just the visible part — and paste it directly into Claude Code (or any terminal-based AI CLI) as an [Image #N] attachment, with zero manual file handling.
+Full page + already copied. That combination is the whole point.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━
 HOW IT WORKS
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-1. Press the hotkey (Option+A on macOS, Alt+A on Windows/Linux), or click the camera icon
-2. The extension auto-scrolls the page, captures every section, and stitches them into a single high-resolution PNG
-3. The PNG is saved to ~/Downloads/ and a viewer tab opens
-4. Switch to your terminal where Claude Code is running, press ⌘V (or Ctrl+V), and the image attaches as [Image #N]
+1. Press the hotkey (Option+A on macOS, Alt+A on Windows/Linux), or click the toolbar icon
+2. The extension auto-scrolls the page, captures every section, and stitches them into one sharp PNG
+3. The PNG is saved to your Downloads folder and a result tab shows you exactly what was captured
+4. Paste it wherever you need it — a chat, a doc, a bug report, an AI assistant
 
-That's it. No manual file picking, no copying paths by hand.
+No file picking, no digging through Downloads, no copying paths by hand.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━
-WHY THIS EXISTS
+PASTES INTO TERMINALS TOO
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-Other "full page screenshot" extensions copy the image bytes to the clipboard. That's useless for terminals — Terminal.app, iTerm2, Windows Terminal etc. don't accept image MIME from the clipboard. Pasting gives you nothing.
+Most screenshot tools put raw image bytes on the clipboard. Terminals — Terminal.app, iTerm2, Windows Terminal — don't accept that, so pasting gives you nothing.
 
-This extension solves it correctly:
-• Saves the PNG to disk first
-• Writes a clipboard "file reference" (the same kind Finder/Explorer creates when you copy a file)
-• Claude Code's terminal recognizes the file reference and attaches the image as [Image #N]
-
-If you've ever wanted to send Claude Code a screenshot without juggling files, this is for you.
+Fullpage Copy writes a real clipboard file reference, the same kind Finder creates when you copy a file. So a terminal-based AI CLI such as Claude Code picks it up and attaches the whole page as [Image #N], while ordinary apps still receive it as a normal image.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━
 FEATURES
@@ -99,6 +108,8 @@ FEATURES
 ✓ Handles SPA inner-scroll containers (Claude.ai, Notion, ChatGPT, Linear)
 ✓ Neutralizes sticky/fixed headers to prevent duplicates
 ✓ Saves at native physical resolution (Retina-quality)
+✓ Very tall pages stay whole — scaled to fit rather than cut short
+✓ Uses a site's own print stylesheet when it has one, for a cleaner capture
 ✓ Plays a satisfying shutter sound
 ✓ Free, open-source, no ads, no tracking, no telemetry
 
@@ -106,8 +117,8 @@ FEATURES
 PLATFORM SUPPORT
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-• macOS: Full auto-paste support (requires a one-time native helper install — see GitHub)
-• Windows / Linux: Click-to-copy fallback mode (paste the @path text, Claude Code loads the file)
+• macOS: the image lands on the clipboard automatically (requires a one-time native helper install — see GitHub)
+• Windows / Linux: click-to-copy fallback — the result page copies the file path for you to paste
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━
 PRIVACY
@@ -142,7 +153,7 @@ Chrome 商店上架时会让你填一个 "Privacy practices" 表单，逐项回�
 
 | 问题 | 回答 |
 |---|---|
-| Single purpose | "Capture a full-page screenshot and put it on the clipboard in a format that terminal-based AI CLIs (like Claude Code) can paste as a file attachment." |
+| Single purpose | "Capture a screenshot of the entire webpage and place it on the clipboard, ready to paste into any app." |
 | 是否收集 PII（个人信息）？ | **No** |
 | 是否收集 health info？ | **No** |
 | 是否收集 financial info？ | **No** |
@@ -184,7 +195,7 @@ Chrome 商店上架时会让你填一个 "Privacy practices" 表单，逐项回�
 
 ---
 
-## 8. 你需要自己做的（4 步）
+## 8. 首次上架流程（已全部完成，留作记录）
 
 ### 第 1 步 — 创建 GitHub 仓库（10 分钟）
 1. https://github.com/new → 仓库名 `fullpage-to-terminal` → Public
@@ -201,7 +212,7 @@ Chrome 商店上架时会让你填一个 "Privacy practices" 表单，逐项回�
 
 ### 第 3 步 — 提交扩展（15 分钟）
 1. Dashboard → "+ New item"
-2. 上传 `/Users/bo-bot/fullpage-to-terminal-store.zip`
+2. 上传 `/Users/bo-bot/fullpage-shot.zip`
 3. 按本文档 §1-§6 填表
 4. 上传宣传图（§7）
 5. 至少要传 1 张截图（你装上扩展自己截一下 viewer 页面就行）

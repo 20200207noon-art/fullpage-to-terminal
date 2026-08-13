@@ -11,6 +11,10 @@
 
 const MAX_SLICE_HEIGHT = 16000;
 const MAX_FINAL_HEIGHT = 16384; // OffscreenCanvas single-canvas height limit
+// Lowest output scale we accept before giving up and truncating. 0.5 means a page
+// up to 32768 CSS px tall still comes out whole (at half resolution) instead of
+// being cut off — losing sharpness beats losing the bottom of the page.
+const MIN_OUT_SCALE = 0.5;
 
 // Global log buffer, cleared at the start of each capture. Logs go to console + this buffer for viewer to show.
 let currentCaptureLogs = [];
@@ -183,9 +187,11 @@ async function capture(tab) {
   let widthPx;
   let heightPx;
   let truncated = false;
+  let stitch = null;
 
   try {
     const result = await scrollStitch(tab, { firstFrameDataUrl, stickyOverlays: allOverlays, pageBgColor });
+    stitch = result;
     dataUrl = result.dataUrl;
     widthPx = result.width;
     heightPx = result.height;
@@ -229,7 +235,10 @@ async function capture(tab) {
     height: heightPx,
     capturedAt: Date.now(),
     truncated,
-    truncatedAt: truncated ? MAX_FINAL_HEIGHT : null
+    truncatedAt: (stitch && stitch.truncatedAtCss) || null,
+    pixelWidth: stitch ? stitch.pixelWidth : null,
+    pixelHeight: stitch ? stitch.pixelHeight : null,
+    outScale: stitch ? stitch.outScale : null
   };
 
   // save to disk → put absolute path into meta so viewer can write @path to clipboard
@@ -886,10 +895,13 @@ async function scrollStitch(tab, opts) {
   // Inner mode: the host column is drawn starting below the page chrome above it
   // (header etc.), so the first frame lines up 1:1 at the canvas top.
   const topOffsetCss = info.mode === "inner" ? Math.max(0, info.rectTop || 0) : 0;
-  // canvas at physical resolution (×dpr) preserves capture sharpness.
-  // 16384 is the OffscreenCanvas hard limit (physical px), so CSS-height limit is 16384/dpr.
+  // Canvas at physical resolution (×dpr) preserves capture sharpness, but 16384
+  // is the OffscreenCanvas hard limit, so on a 2× Retina screen that used to cut
+  // every page taller than 8192 CSS px in half — silently. Instead of truncating,
+  // the outScale below shrinks the output just enough to fit the whole page
+  // (down to MIN_OUT_SCALE). Only past that do we still have to cut.
   let truncated = false;
-  const maxCssHeight = Math.floor(MAX_FINAL_HEIGHT / dpr);
+  const maxCssHeight = Math.floor(MAX_FINAL_HEIGHT / MIN_OUT_SCALE);
   if (h > maxCssHeight - topOffsetCss) {
     h = maxCssHeight - topOffsetCss;
     truncated = true;
@@ -1038,18 +1050,31 @@ async function scrollStitch(tab, opts) {
     decodedSlices.push({ ...s, bmp });
   }
 
-  const canvasW = Math.round(baseCanvasW_css * realDpr);
-  const canvasH = Math.round((h + topOffsetCss) * realDpr);
+  // Output scale: normally == realDpr (1:1 physical pixels, maximum sharpness).
+  // For a page too tall to fit 16384 physical px we shrink the output instead of
+  // cutting the page short. srcDpr stays realDpr — source coordinates always
+  // address the captured bitmap's own physical pixels.
+  const fullCssH = h + topOffsetCss;
+  const outScale = Math.min(realDpr, MAX_FINAL_HEIGHT / fullCssH);
+  const downscaled = outScale < realDpr - 1e-6;
+  if (downscaled) {
+    fpsLog(`page too tall for a ${MAX_FINAL_HEIGHT}px canvas at ${realDpr}× — ` +
+           `scaling output to ${outScale.toFixed(3)}× to keep the whole page`);
+  }
+
+  const canvasW = Math.round(baseCanvasW_css * outScale);
+  const canvasH = Math.round(fullCssH * outScale);
   const canvas = new OffscreenCanvas(canvasW, canvasH);
   const ctx = canvas.getContext("2d");
   if (!ctx) throw new Error("Cannot create OffscreenCanvas 2D context");
-  // Key: disable smoothing — no resampling when src and dst sizes match
-  ctx.imageSmoothingEnabled = false;
+  // No resampling when src and dst sizes match; smooth only when we downscale
+  ctx.imageSmoothingEnabled = downscaled;
+  if (downscaled) ctx.imageSmoothingQuality = "high";
   // fill canvas with the page's real background color (avoids white edges on dark pages)
   ctx.fillStyle = pageBgColor;
   ctx.fillRect(0, 0, canvasW, canvasH);
 
-  const mainWidthPx = Math.round(w * realDpr);
+  const mainWidthPxSrc = Math.round(w * realDpr);
 
   // Inner mode: everything OUTSIDE the host column (side menu, header, right
   // rail) is static — paint it exactly ONCE from the first frame at the canvas
@@ -1061,7 +1086,12 @@ async function scrollStitch(tab, opts) {
     try {
       const ffBlob = await (await fetch(firstFrameDataUrl)).blob();
       const ffBmp = await createImageBitmap(ffBlob);
-      ctx.drawImage(ffBmp, 0, 0);
+      ctx.drawImage(
+        ffBmp, 0, 0, ffBmp.width, ffBmp.height,
+        0, 0,
+        Math.round((ffBmp.width  / realDpr) * outScale),
+        Math.round((ffBmp.height / realDpr) * outScale)
+      );
       ffBmp.close();
       fpsLog("inner mode: first frame painted once at top (static side regions)");
     } catch (e) {
@@ -1076,18 +1106,24 @@ async function scrollStitch(tab, opts) {
     const bmp = s.bmp;
     const drawH = Math.min(vh, h - s.y);
     if (drawH <= 0) continue;
-    const dstY = Math.round((topOffsetCss + s.y) * realDpr);
-    const dstH = Math.round(drawH * realDpr);
+    // Derive dstH from the NEXT slice's rounded top edge, not from round(drawH ×
+    // outScale): with a fractional outScale the two disagree by a pixel and leave
+    // hairline unpainted seams every viewport down the image.
+    const dstY = Math.round((topOffsetCss + s.y) * outScale);
+    const dstYEnd = Math.round((topOffsetCss + s.y + drawH) * outScale);
+    const dstH = Math.max(1, dstYEnd - dstY);
+    const srcH = Math.round(drawH * realDpr);
     if (isInner) {
       const rt = (typeof s.rectTop === "number") ? s.rectTop : info.rectTop;
       const rl = (typeof s.rectLeft === "number") ? s.rectLeft : info.rectLeft;
       const srcX = Math.round(rl * realDpr);
       const srcY = Math.round(rt * realDpr);
-      const bandW = Math.min(mainWidthPx, bmp.width - srcX);
-      const dstX = Math.round((info.rectLeft || 0) * realDpr);
-      ctx.drawImage(bmp, srcX, srcY, bandW, dstH, dstX, dstY, bandW, dstH);
+      const bandWSrc = Math.min(mainWidthPxSrc, bmp.width - srcX);
+      const bandWDst = Math.round((bandWSrc / realDpr) * outScale);
+      const dstX = Math.round((info.rectLeft || 0) * outScale);
+      ctx.drawImage(bmp, srcX, srcY, bandWSrc, srcH, dstX, dstY, bandWDst, dstH);
     } else {
-      ctx.drawImage(bmp, 0, 0, canvasW, dstH, 0, dstY, canvasW, dstH);
+      ctx.drawImage(bmp, 0, 0, bmp.width, srcH, 0, dstY, canvasW, dstH);
     }
   }
 
@@ -1106,9 +1142,11 @@ async function scrollStitch(tab, opts) {
         const sy = Math.round(ov.top * realDpr);
         const sw = Math.round(ov.width * realDpr);
         const sh = Math.round(ov.height * realDpr);
-        const dx = sx;
-        const dy = sy;
-        ctx.drawImage(ffBmp, sx, sy, sw, sh, dx, dy, sw, sh);
+        const dx = Math.round(ov.left * outScale);
+        const dy = Math.round(ov.top * outScale);
+        const dw = Math.round(ov.width * outScale);
+        const dh = Math.round(ov.height * outScale);
+        ctx.drawImage(ffBmp, sx, sy, sw, sh, dx, dy, dw, dh);
       }
       ffBmp.close();
       fpsLog(`pasted ${stickyOverlays.length} sticky overlays at first-viewport positions`);
@@ -1232,7 +1270,16 @@ async function scrollStitch(tab, opts) {
 
   const outBlob = await canvas.convertToBlob({ type: "image/png" });
   const dataUrl = await blobToDataUrl(outBlob);
-  return { dataUrl, width: w, height: info.height + topOffsetCss, truncated };
+  return {
+    dataUrl,
+    width: w,
+    height: info.height + topOffsetCss,
+    truncated,
+    truncatedAtCss: truncated ? fullCssH : null,
+    pixelWidth: canvasW,
+    pixelHeight: canvasH,
+    outScale
+  };
 }
 
 // chrome.scripting.executeScript wrapper: runs the function in page context and returns the result

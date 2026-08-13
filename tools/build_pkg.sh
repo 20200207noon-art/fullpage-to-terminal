@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build a macOS .pkg installer for the Fullpage to Terminal native messaging host.
+# Build a macOS .pkg installer for the Fullpage Copy native messaging host.
 #
 # Drops on install:
 #   /Library/Application Support/FullpageToTerminal/copy_file_to_clipboard.sh
@@ -52,7 +52,7 @@ fi
 cat > "$PAYLOAD_DIR/Library/Google/Chrome/NativeMessagingHosts/com.fullpageshot.copyfile.json" <<EOF
 {
   "name": "com.fullpageshot.copyfile",
-  "description": "Fullpage to Terminal: write image as clipboard file reference",
+  "description": "Fullpage Copy: write image as clipboard file reference",
   "path": "${INSTALLED_SH}",
   "type": "stdio",
   "allowed_origins": [${ALLOWED_ORIGINS}]
@@ -65,7 +65,7 @@ cat > "$PAYLOAD_DIR/Library/Application Support/FullpageToTerminal/uninstall.sh"
 set -e
 rm -f "/Library/Google/Chrome/NativeMessagingHosts/com.fullpageshot.copyfile.json"
 rm -rf "/Library/Application Support/FullpageToTerminal"
-echo "Fullpage to Terminal native host uninstalled."
+echo "Fullpage Copy native host uninstalled."
 EOF
 chmod 755 "$PAYLOAD_DIR/Library/Application Support/FullpageToTerminal/uninstall.sh"
 

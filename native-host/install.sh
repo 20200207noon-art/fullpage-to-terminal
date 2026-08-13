@@ -15,7 +15,7 @@ if [ -z "$EXT_ID" ]; then
   echo "How to find the extension ID:"
   echo "  1. Open chrome://extensions"
   echo "  2. Toggle 'Developer mode' (top right)"
-  echo "  3. Find the Fullpage to Terminal card — the 32-letter string is the ID"
+  echo "  3. Find the Fullpage Copy card — the 32-letter string is the ID"
   exit 1
 fi
 
@@ -38,7 +38,7 @@ MANIFEST="${NMH_DIR}/com.fullpageshot.copyfile.json"
 cat > "$MANIFEST" <<EOF
 {
   "name": "com.fullpageshot.copyfile",
-  "description": "Fullpage to Terminal: write image to clipboard as a file reference",
+  "description": "Fullpage Copy: write image to clipboard as a file reference",
   "path": "${HOST_SCRIPT}",
   "type": "stdio",
   "allowed_origins": [
@@ -54,6 +54,6 @@ echo "Host script: ${HOST_SCRIPT}"
 echo "Extension:   ${EXT_ID}"
 echo ""
 echo "Next:"
-echo "  1. In chrome://extensions, click 🔄 on the Fullpage to Terminal card"
+echo "  1. In chrome://extensions, click 🔄 on the Fullpage Copy card"
 echo "  2. Try Option+A — capture should auto-save and auto-copy as file ref"
 echo "     so ⌘V in Claude Code attaches the image directly"

@@ -1,6 +1,6 @@
 {
-  "extName":         { "message": "Fullpage to Terminal" },
-  "extDesc":         { "message": "Capture the full page → paste it straight into Claude Code (or any terminal-based AI CLI) as [Image #N]." },
+  "extName":         { "message": "Fullpage Copy" },
+  "extDesc":         { "message": "Copy a whole long webpage as one image — full-page screenshot straight to your clipboard, paste anywhere with one key." },
   "actionTitle":     { "message": "Capture full page (Option+A)" },
   "commandCapture":  { "message": "Capture the full current tab (Option+A)" },
 

@@ -1,8 +1,10 @@
-# Fullpage to Terminal
+# Fullpage Copy
 
-**The fastest way to send a full webpage screenshot to Claude Code (or any terminal-based AI CLI).**
+**Copy a whole long webpage as one image — already on your clipboard.**
 
-Press `Option+A` → switch to Claude → `⌘V` → done. The whole page (not just the visible part) shows up as `[Image #N]`. **2 keystrokes total.**
+Press `Option+A` → switch to wherever you want it → `⌘V` → done. The entire scrollable page, not just the visible part. **2 keystrokes total.**
+
+Terminals count as "wherever": the clipboard gets a real file reference, so Claude Code and other terminal AI CLIs attach the page as `[Image #N]`.
 
 ## What you'd do without this extension
 
@@ -10,7 +12,7 @@ Press `Option+A` → switch to Claude → `⌘V` → done. The whole page (not j
 |---|---|
 | **GoFullPage / similar** | screenshot → download PNG → open Finder → ⌘C the file → switch app → ⌘V = **5 steps** |
 | **macOS ⌘⇧⌃4** | drag area → ⌘V = **2 steps** *(but visible viewport only — no scrolling pages)* |
-| **Fullpage to Terminal** | `Option+A` → `⌘V` = **2 steps**, **and** it's the entire scrollable page |
+| **Fullpage Copy** | `Option+A` → `⌘V` = **2 steps**, **and** it's the entire scrollable page |
 
 The combination of *full page* + *auto-on-clipboard-as-file-reference* is what other extensions don't ship. They give you a download to find and copy by hand.
 
