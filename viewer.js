@@ -115,24 +115,37 @@ const setBannerError    = (title, sub) => setStatus("err", title, sub);
 // Rendering it unscaled makes it look 2× too big on any Retina/HiDPI screen —
 // that was the "the screenshot is huge on this Mac but fine on the other one"
 // bug: the difference was the display's devicePixelRatio, not Chrome's version.
-// Default view = logical size (naturalWidth / dpr), capped to the window width.
-// Click toggles 1:1 physical pixels for pixel-peeping.
+//
+// Two views, click to toggle:
+//   default      — fits the window width: you land on the whole page at a glance
+//   .actual-size — the page's own size, what it looked like in the browser
+// Neither view ever exceeds the page's real CSS width, so the image is never
+// blown up past life size.
 function bindImageZoom() {
-  const applyLogicalWidth = () => {
+  // The page's own CSS width. Prefer meta: for a very tall page the capture is
+  // scaled down to fit the canvas limit, so naturalWidth / dpr would undershoot.
+  const pageCssWidth = () =>
+    Math.round((lastMeta && lastMeta.width) ||
+               shotImg.naturalWidth / (window.devicePixelRatio || 1));
+
+  const applySizing = () => {
     if (!shotImg.naturalWidth) return;
-    // Prefer the page's own CSS width from meta: for a very tall page the capture
-    // is scaled down to fit the canvas limit, so naturalWidth / dpr would under-
-    // shoot. Fall back to dpr only when meta has no width.
-    const cssW = (lastMeta && lastMeta.width) ||
-                 Math.round(shotImg.naturalWidth / (window.devicePixelRatio || 1));
-    shotImg.style.width = Math.round(cssW) + "px";
+    const cssW = pageCssWidth() + "px";
+    if (imgWrap.classList.contains("actual-size")) {
+      shotImg.style.width = cssW;        // life size; scrolls if the window is narrower
+      shotImg.style.maxWidth = "none";   // inline max-width from the other view would cap it
+    } else {
+      shotImg.style.width = "100%";      // shrink to fit…
+      shotImg.style.maxWidth = cssW;     // …but never stretch past life size
+    }
   };
-  shotImg.addEventListener("load", applyLogicalWidth);
-  if (shotImg.complete) applyLogicalWidth();
+  shotImg.addEventListener("load", applySizing);
+  if (shotImg.complete) applySizing();
   // dragging the window between a Retina and a non-Retina display changes dpr
-  window.addEventListener("resize", applyLogicalWidth);
+  window.addEventListener("resize", applySizing);
   shotImg.addEventListener("click", () => {
     imgWrap.classList.toggle("actual-size");
+    applySizing();
   });
 }
 
