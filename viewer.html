@@ -137,22 +137,14 @@
         overflow: auto;
         background: var(--bg);
       }
-      /* Two views, click to toggle:
-         default   — fits the window width, so you take in the whole page at once
-         .actual-size — the page's own size, i.e. what it looked like in the browser
-
-         The PNG is in PHYSICAL pixels (width = cssWidth × devicePixelRatio), so
-         it must never be rendered unscaled — on Retina that is 2× too big.
-         viewer.js caps both views at the page's real CSS width. */
+      /* One view: fitted to the window width, so the whole page reads at a glance.
+         The PNG is in PHYSICAL pixels (width = cssWidth × devicePixelRatio), so it
+         must never be rendered unscaled — on Retina that is 2× too big. viewer.js
+         caps the width at the page's real CSS size so it is never blown up either. */
       .img-wrap img {
         display: block;
         width: 100%;
         height: auto;
-        cursor: zoom-in;
-      }
-      .img-wrap.actual-size img {
-        max-width: none;
-        cursor: zoom-out;
       }
 
       /* ── Error / diagnostics panels ───── */

@@ -2,18 +2,18 @@
 
 ---
 
-## 📌 v1.24.4 SHIP STATUS（2026-08-14 更新）
+## 📌 v1.24.5 SHIP STATUS（2026-08-14 更新）
 
 > **改名了**：`Fullpage to Terminal` → **`Fullpage Copy`**。
 > Web Store 里的 Item name 也要跟着改（Store listing tab 顶部第一个字段）。
 > 扩展 ID 不变，还是 `nibipkcfhagabnfhdmlpcnmmnebagolp`，属于同一个 item 的更新。
 
-### v1.24.4 What's new（复制粘贴用）
+### v1.24.5 What's new（复制粘贴用）
 
 ```
-v1.24.4
+v1.24.5
 - Renamed to Fullpage Copy — the point of this extension is copying a whole long page as one image.
-- Fixed: on Retina / HiDPI screens the result page showed the screenshot at twice its real size, forcing you to scroll sideways. The result page now opens fitted to the window so you see the whole page at once, and one click switches to the page's real size.
+- Fixed: on Retina / HiDPI screens the result page showed the screenshot at twice its real size, forcing you to scroll sideways. The result page now shows the capture fitted to the window, so you see the whole page at a glance.
 - Fixed: very tall pages were silently cut off (above ~8192 px of page height on a 2× screen). The whole page is now kept, scaled down just enough to fit, instead of losing the bottom.
 - The result page now reports the exact image size, output scale, and whether anything had to be cut.
 ```

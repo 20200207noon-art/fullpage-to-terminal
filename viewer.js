@@ -62,7 +62,7 @@ const setBannerError    = (title, sub) => setStatus("err", title, sub);
 
     shotImg.src = lastDataUrl;
     imgWrap.style.display = "block";
-    bindImageZoom();
+    bindImageSizing();
 
     // diagnostics: meta summary + capture logs, behind the ⓘ button
     diagText.textContent =
@@ -116,37 +116,22 @@ const setBannerError    = (title, sub) => setStatus("err", title, sub);
 // that was the "the screenshot is huge on this Mac but fine on the other one"
 // bug: the difference was the display's devicePixelRatio, not Chrome's version.
 //
-// Two views, click to toggle:
-//   default      — fits the window width: you land on the whole page at a glance
-//   .actual-size — the page's own size, what it looked like in the browser
-// Neither view ever exceeds the page's real CSS width, so the image is never
-// blown up past life size.
-function bindImageZoom() {
-  // The page's own CSS width. Prefer meta: for a very tall page the capture is
-  // scaled down to fit the canvas limit, so naturalWidth / dpr would undershoot.
-  const pageCssWidth = () =>
-    Math.round((lastMeta && lastMeta.width) ||
-               shotImg.naturalWidth / (window.devicePixelRatio || 1));
-
+// One view: the image fits the window width, never wider than the page's own
+// CSS width. No zoom toggle — the result page is a confirmation, not a viewer.
+function bindImageSizing() {
   const applySizing = () => {
     if (!shotImg.naturalWidth) return;
-    const cssW = pageCssWidth() + "px";
-    if (imgWrap.classList.contains("actual-size")) {
-      shotImg.style.width = cssW;        // life size; scrolls if the window is narrower
-      shotImg.style.maxWidth = "none";   // inline max-width from the other view would cap it
-    } else {
-      shotImg.style.width = "100%";      // shrink to fit…
-      shotImg.style.maxWidth = cssW;     // …but never stretch past life size
-    }
+    // The page's own CSS width. Prefer meta: for a very tall page the capture is
+    // scaled down to fit the canvas limit, so naturalWidth / dpr would undershoot.
+    const cssW = Math.round((lastMeta && lastMeta.width) ||
+                            shotImg.naturalWidth / (window.devicePixelRatio || 1));
+    shotImg.style.width = "100%";            // shrink to fit…
+    shotImg.style.maxWidth = cssW + "px";    // …but never stretch past life size
   };
   shotImg.addEventListener("load", applySizing);
   if (shotImg.complete) applySizing();
   // dragging the window between a Retina and a non-Retina display changes dpr
   window.addEventListener("resize", applySizing);
-  shotImg.addEventListener("click", () => {
-    imgWrap.classList.toggle("actual-size");
-    applySizing();
-  });
 }
 
 function bindDownload() {
